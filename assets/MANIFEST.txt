@@ -1,0 +1,71 @@
+Mars Mission — Asset Manifest (Milestone 1 Open World)
+=======================================================
+
+The game runs with procedural fallbacks when files are missing.
+Place transparent PNGs using these paths to upgrade the look.
+
+backgrounds/
+  sky.png
+  mountains_far.png
+  mountains_near.png
+  ground.png
+
+characters/
+  astronaut_sheet.png     (optional 4-direction walk sheet)
+
+buildings/
+  habitat.png
+  research_lab.png
+  rover_garage.png
+
+vehicles/
+  rover.png
+
+equipment/
+  antenna.png
+  solar_panels.png
+  power_console.png
+
+environment/
+  rock1.png
+  crater.png
+  debris.png
+
+effects/
+  dust.png
+  signal_ring.png
+
+ui/
+  hud_frame.png
+  button.png
+  map_frame.png
+
+audio/
+  (ogg preferred) ambient_mars.ogg, sfx_interact.ogg, sfx_pickup.ogg
+
+fonts/
+  (optional TTF)
+
+Legacy paths still checked by main.py loaders:
+  sprites/habitat.png, sprites/solar_panels.png, sprites/antenna.png
+  sprites/rover.png, sprites/rocks/rock1.png
+  backgrounds/sky.png, mountains_far.png, mountains_near.png, ground.png
+
+Challenge redesign (procedural UI is used until these exist):
+  ui/radar_console.png
+  ui/antenna_dish.png
+  ui/cable_glow.png
+  ui/power_board.png
+  vehicles/rover_topdown.png
+  effects/radar_blip.png
+  effects/dust_trail.png
+
+NASA research data pack (local offline):
+  research_data/research_manifest.json
+  research_data/hirise/
+  research_data/mola/
+  research_data/perseverance/
+  research_data/metadata/
+  Re-fetch browse pack: python tools_fetch_nasa_data.py
+  Note: authentic MOLA numeric profiles must be added manually from PDS;
+  the pack marks numeric MOLA as unavailable rather than inventing elevations.
