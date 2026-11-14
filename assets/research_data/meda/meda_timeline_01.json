@@ -1,0 +1,37 @@
+{
+  "id": "meda_timeline_01",
+  "title": "Curated MEDA environmental context windows (educational)",
+  "source_paper": "The diverse meteorology of Jezero crater over the first 250 sols of Perseverance on Mars",
+  "source_doi": "https://doi.org/10.1038/s41561-022-01084-0",
+  "instrument": "Mars 2020 MEDA / SkyCam-related opacity context",
+  "units": {
+    "optical_depth": "dimensionless aerosol optical depth (published seasonal range)",
+    "note": "Windows use published early-mission dust OD context (approx. 0.3–0.6; morning OD often ~0.5). Not a raw PDS CSV sol extract."
+  },
+  "windows": [
+    {
+      "id": "A",
+      "label": "Window A — elevated morning opacity context",
+      "optical_depth_context": 0.5,
+      "dust_indicator": "higher",
+      "planning_note": "Morning opacity often higher in the clear-season cycle described in the source paper."
+    },
+    {
+      "id": "B",
+      "label": "Window B — lower / calmer dust OD interval",
+      "optical_depth_context": 0.35,
+      "dust_indicator": "calmer",
+      "planning_note": "Within the published low dust OD range (0.3–0.6) toward the clearer end."
+    },
+    {
+      "id": "C",
+      "label": "Window C — upper-range dust OD context",
+      "optical_depth_context": 0.6,
+      "dust_indicator": "higher",
+      "planning_note": "Near the upper end of the published early-mission dust OD range."
+    }
+  ],
+  "correct_window": "B",
+  "verification_state": "curated_from_peer_reviewed_summary",
+  "fabricated": false
+}

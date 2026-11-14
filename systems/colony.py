@@ -220,9 +220,7 @@ def make_colony(
         ),
     ]
 
-    # Research flavor samples (optional) + mission materials from materials.WORLD_PICKUPS
-    from . import materials as mats
-
+    # Flavor samples only — mission materials are spawned by caches.refresh_colony_supplies
     collectibles = [
         interactions.make_collectible(
             "mineral_01",
@@ -241,20 +239,6 @@ def make_colony(
             (120, 200, 230),
         ),
     ]
-    for pickup in mats.WORLD_PICKUPS:
-        info = mats.CATALOG[pickup["material"]]
-        col = interactions.make_collectible(
-            pickup["uid"],
-            info["name"],
-            pickup["pos"],
-            info["category"],
-            f"E - Collect {info['name']}",
-            (90, 220, 160) if info["mandatory"] else (160, 200, 230),
-            radius=60,
-        )
-        col["material"] = pickup["material"]
-        col["qty"] = pickup["qty"]
-        collectibles.append(col)
 
     return {
         "world_w": WORLD_W,

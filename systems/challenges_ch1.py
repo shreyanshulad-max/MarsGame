@@ -12,11 +12,15 @@ from systems import journal as journal_mod
 from systems import materials as mats
 from systems import workbench as wb
 
-TIME_LIMIT = 90
+TIME_LIMIT = 120          # timed calibration only (briefing/practice do not use this)
 POINTS = 100
-START_ANGLE = -30
+# Timed mission starts near the target so new players are not lost
+START_ANGLE = 5
+PRACTICE_START_ANGLE = -10
 TARGET_ANGLE = 20
 STEP = 5
+FINE_STEP = 2             # finer nudge when already near the stable zone
+STABLE_ZONE_DEG = 10      # forgiving window (was exact 0.1°)
 PACKETS_NEEDED = 3
 
 # Correct assembly recipe (deterministic)
@@ -34,9 +38,15 @@ PORTS = {
 
 def make_state():
     return {
-        "phase": "diagnose",  # diagnose -> assemble -> radar -> align -> packets -> done
+        "phase": "diagnose",  # diagnose -> assemble -> radar -> briefing/practice/ready -> align -> packets -> done
         "time_left": float(TIME_LIMIT),
         "finish_time_left": 0,
+        "timer_running": False,  # countdown only during timed calibration
+        "align_mode": "none",  # none | practice | timed
+        "practice_step": "adjust",
+        "practice_moved": False,
+        "practice_saw_signal": False,
+        "practice_stable_once": False,
         "hint": "Inspect the damaged antenna. Read symptoms, then collect parts if needed.",
         "symptoms_checked": [],
         "assembly": {"coil": None, "amp": None, "fuse": None},  # material ids placed
@@ -63,6 +73,7 @@ def make_state():
         "restore_delay": 0.0,
         "pulse": 0.0,
         "align_feedback": "",
+        "signal_band": "LOW SIGNAL",
         "flash_slot": None,
         "flash_timer": 0.0,
         "tracked": None,
@@ -70,8 +81,40 @@ def make_state():
 
 
 def signal_strength(angle: float) -> float:
+    """0–100 strength. Soft falloff so the stable zone is readable."""
     distance = abs(angle - TARGET_ANGLE)
-    return max(0, 100 - distance * 2)
+    # Inside stable zone: stay high (88–100)
+    if distance <= STABLE_ZONE_DEG:
+        return max(88.0, 100.0 - distance * 1.2)
+    return max(0.0, 88.0 - (distance - STABLE_ZONE_DEG) * 2.5)
+
+
+def angle_error(angle: float) -> float:
+    return abs(float(angle) - TARGET_ANGLE)
+
+
+def is_stable(angle: float) -> bool:
+    return angle_error(angle) <= STABLE_ZONE_DEG
+
+
+def signal_band(angle: float, interference: float = 0.0) -> str:
+    if interference > 0:
+        return "LOW SIGNAL"
+    err = angle_error(angle)
+    if err <= STABLE_ZONE_DEG * 0.35:
+        return "STABLE SIGNAL"
+    if err <= STABLE_ZONE_DEG:
+        return "STABLE SIGNAL"
+    if err <= STABLE_ZONE_DEG * 2.5:
+        return "IMPROVING SIGNAL"
+    return "LOW SIGNAL"
+
+
+def current_step_size(ch1: dict) -> int:
+    """5° normally; finer 2° steps once inside / near the stable zone."""
+    if is_stable(ch1["antenna_angle"]) or angle_error(ch1["antenna_angle"]) <= STABLE_ZONE_DEG + 5:
+        return FINE_STEP
+    return STEP
 
 
 def satellites():
@@ -85,15 +128,22 @@ def satellites():
 def rotate_antenna(ch1, direction: int) -> None:
     if ch1["connection_restored"] or ch1["phase"] not in ("align", "packets"):
         return
-    ch1["antenna_angle"] += direction * STEP
+    step = current_step_size(ch1)
+    ch1["antenna_angle"] += direction * step
     ch1["antenna_angle"] = max(-60, min(60, ch1["antenna_angle"]))
     dist = ch1["antenna_angle"] - TARGET_ANGLE
-    if abs(dist) < 0.1:
-        ch1["align_feedback"] = "Signal peaking — hold steady."
+    band = signal_band(ch1["antenna_angle"], ch1.get("interference", 0))
+    ch1["signal_band"] = band
+    if band == "STABLE SIGNAL":
+        ch1["align_feedback"] = f"STABLE — hold steady (angle {ch1['antenna_angle']:+d}°, target {TARGET_ANGLE:+d}°)."
     elif dist < 0:
-        ch1["align_feedback"] = "Alignment too low — signal improving if you go higher."
+        ch1["align_feedback"] = f"Too low — turn RIGHT to strengthen the signal ({band})."
     else:
-        ch1["align_feedback"] = "Alignment too high — signal improving if you go lower."
+        ch1["align_feedback"] = f"Too high — turn LEFT to strengthen the signal ({band})."
+    if ch1.get("align_mode") == "practice":
+        from systems import antenna_tutorial as atut
+
+        atut.advance_practice_on_rotate(ch1)
 
 
 def _assembly_faults(ch1) -> list[str]:
@@ -182,36 +232,53 @@ def update(ch1, dt: float, active_radar: bool, active_align: bool) -> None:
             ch1["hint"] = "Compare telemetry. Find the flickering weak relay."
 
     if active_align and ch1["phase"] in ("align", "packets"):
-        ch1["interference_cd"] -= dt
-        if ch1["interference_cd"] <= 0 and ch1["interference"] <= 0:
-            ch1["interference"] = random.uniform(1.2, 2.0)
-            ch1["interference_cd"] = random.uniform(3.5, 6.0)
-        if ch1["interference"] > 0:
-            ch1["interference"] -= dt
-            ch1["align_feedback"] = "Interference detected — wait for a clear window."
+        practice = ch1.get("align_mode") == "practice"
+        # Interference only during timed mission
+        if not practice:
+            ch1["interference_cd"] -= dt
+            if ch1["interference_cd"] <= 0 and ch1["interference"] <= 0:
+                ch1["interference"] = random.uniform(0.8, 1.4)
+                ch1["interference_cd"] = random.uniform(5.0, 8.0)
+            if ch1["interference"] > 0:
+                ch1["interference"] -= dt
+                ch1["align_feedback"] = "Interference — wait briefly, then re-enter the stable zone."
 
         strength = signal_strength(ch1["antenna_angle"])
         if ch1["interference"] > 0:
-            strength *= 0.35
-        aligned = abs(ch1["antenna_angle"] - TARGET_ANGLE) < 0.1
-        if ch1["phase"] == "align" and aligned and strength > 85 and ch1["interference"] <= 0:
-            ch1["phase"] = "packets"
-            ch1["hint"] = "Stable lock. Hold to capture transmission packets."
-        if ch1["phase"] == "packets":
-            good = aligned and strength > 80 and ch1["interference"] <= 0
-            if good:
-                ch1["packet_timer"] += dt
-                if ch1["packet_timer"] >= 0.85:
-                    ch1["packet_timer"] = 0.0
-                    ch1["packets"] = min(PACKETS_NEEDED, ch1["packets"] + 1)
-                    ch1["hint"] = f"Packet {ch1['packets']}/{PACKETS_NEEDED} acquired."
-            else:
-                ch1["packet_timer"] = max(0.0, ch1["packet_timer"] - dt * 0.5)
-            if ch1["packets"] >= PACKETS_NEEDED and not ch1["connection_restored"]:
-                ch1["connection_restored"] = True
-                ch1["restore_delay"] = 1.1
-                ch1["finish_time_left"] = ch1["time_left"]
-                ch1["hint"] = "CONNECTION RESTORED"
+            strength *= 0.45
+        band = signal_band(ch1["antenna_angle"], ch1.get("interference", 0))
+        ch1["signal_band"] = band
+        stable = is_stable(ch1["antenna_angle"]) and ch1["interference"] <= 0
+
+        if practice:
+            # Practice never awards mission completion / packets permanently
+            if stable and ch1.get("practice_step") != "success":
+                ch1["practice_stable_once"] = True
+                ch1["practice_step"] = "success"
+                ch1["hint"] = "Good work! You established a stable test connection."
+                ch1["align_feedback"] = "PRACTICE COMPLETE — stable test link."
+        else:
+            if ch1["phase"] == "align" and stable and strength >= 85:
+                ch1["phase"] = "packets"
+                ch1["hint"] = "STABLE lock — hold to capture transmission packets."
+            if ch1["phase"] == "packets":
+                good = stable and strength >= 80
+                if good:
+                    ch1["packet_timer"] += dt
+                    if ch1["packet_timer"] >= 0.7:
+                        ch1["packet_timer"] = 0.0
+                        ch1["packets"] = min(PACKETS_NEEDED, ch1["packets"] + 1)
+                        ch1["hint"] = f"Packet {ch1['packets']}/{PACKETS_NEEDED} acquired."
+                        ch1["signal_band"] = "STABLE SIGNAL"
+                else:
+                    ch1["packet_timer"] = max(0.0, ch1["packet_timer"] - dt * 0.4)
+                if ch1["packets"] >= PACKETS_NEEDED and not ch1["connection_restored"]:
+                    ch1["connection_restored"] = True
+                    ch1["restore_delay"] = 1.1
+                    ch1["finish_time_left"] = ch1["time_left"]
+                    ch1["timer_running"] = False
+                    ch1["signal_band"] = "COMMUNICATION ESTABLISHED"
+                    ch1["hint"] = "CONNECTION RESTORED"
 
     if ch1["connection_restored"] and ch1["restore_delay"] > 0:
         ch1["restore_delay"] -= dt
@@ -542,26 +609,37 @@ def handle_radar_event(ch1, event, ui_state) -> str | None:
                 break
 
     if ch1["identified"] == "SAT-02" and ui_state["continue"].collidepoint(pos):
-        ch1["phase"] = "align"
-        ch1["hint"] = "Adjust dish using signal feedback. Capture 3 packets."
-        return "align"
+        ch1["phase"] = "briefing"
+        ch1["timer_running"] = False
+        ch1["hint"] = "Read the antenna briefing, then try guided practice."
+        return "briefing"
     return None
 
 
-def draw_align(surface, fonts, mouse_pos, ch1):
+def draw_align(surface, fonts, mouse_pos, ch1, practice: bool = False):
     ui.dim_backdrop(surface, 145)
-    box = pygame.Rect(80, 50, 1120, 620)
+    box = pygame.Rect(80, 40, 1120, 600 if practice else 620)
     ui.panel(surface, box)
-    ui.header(surface, fonts, box, "ANTENNA CALIBRATION", "Use signal feedback — target is not printed as a big answer label")
+    mode = "PRACTICE — no timer, no score" if practice or ch1.get("align_mode") == "practice" else "TIMED CALIBRATION"
+    ui.header(surface, fonts, box, "ANTENNA CALIBRATION", mode)
+
+    band = ch1.get("signal_band") or signal_band(ch1["antenna_angle"], ch1.get("interference", 0))
+    step = current_step_size(ch1)
     ui.objective_bar(
         surface, fonts,
-        f"Packets {ch1['packets']}/{PACKETS_NEEDED}  |  Angle {ch1['antenna_angle']:+d}°  |  {ch1.get('align_feedback','')}",
-        y=115,
+        f"{band}  |  Angle {ch1['antenna_angle']:+d}°  |  Target ~{TARGET_ANGLE:+d}°  |  Packets {ch1['packets']}/{PACKETS_NEEDED}",
+        y=110,
     )
 
-    dx, dy = 360, 380
+    dx, dy = 360, 360
     pygame.draw.ellipse(surface, (40, 25, 18), (dx - 90, dy + 70, 180, 36))
     pygame.draw.rect(surface, (110, 115, 125), (dx - 8, dy - 10, 16, 100))
+    # Target bearing indicator (dashed arc cue)
+    t_ang = math.radians(TARGET_ANGLE - 90)
+    t_tip = (dx + int(math.cos(t_ang) * 58), dy - 40 + int(math.sin(t_ang) * 24))
+    pygame.draw.line(surface, (80, 120, 90), (dx, dy - 40), t_tip, 2)
+    ui.label(surface, fonts, "target", (t_tip[0] - 18, t_tip[1] - 18), ui.C_MUTED, "small")
+
     ang = math.radians(ch1["antenna_angle"] - 90)
     pygame.draw.ellipse(surface, (200, 205, 215), (dx - 70, dy - 80, 140, 70))
     tip = (dx + int(math.cos(ang) * 50), dy - 40 + int(math.sin(ang) * 20))
@@ -569,37 +647,48 @@ def draw_align(surface, fonts, mouse_pos, ch1):
     pygame.draw.circle(surface, ui.C_CYAN, tip, 6)
 
     strength = signal_strength(ch1["antenna_angle"])
-    if ch1["interference"] > 0:
-        strength *= 0.35
-        ui.centered(surface, fonts, "INTERFERENCE!", (dx, 200), ui.C_RED, "title")
+    if ch1.get("interference", 0) > 0:
+        strength *= 0.45
+        ui.centered(surface, fonts, "INTERFERENCE!", (dx, 190), ui.C_RED, "title")
 
-    ui.label(surface, fonts, "SIGNAL STRENGTH", (620, 180), ui.C_TEXT, "body")
-    col = ui.C_GREEN if strength > 80 else (ui.C_AMBER if strength > 40 else ui.C_RED)
-    ui.meter(surface, pygame.Rect(620, 220, 420, 28), strength, 100, col)
-    ui.label(surface, fonts, f"{int(strength)}%", (1060, 222), col, "body")
+    ui.label(surface, fonts, "SIGNAL STRENGTH", (620, 160), ui.C_TEXT, "body")
+    col = ui.C_GREEN if "STABLE" in band or band.startswith("COMM") else (ui.C_AMBER if "IMPROVING" in band else ui.C_RED)
+    ui.meter(surface, pygame.Rect(620, 196, 420, 28), strength, 100, col)
+    ui.label(surface, fonts, f"{int(strength)}%", (1060, 198), col, "body")
+    # Text status (not colour-only)
+    ui.label(surface, fonts, band, (620, 232), col, "body")
+    ui.label(
+        surface, fonts,
+        f"Stable zone: ±{STABLE_ZONE_DEG}° of {TARGET_ANGLE:+d}°  ·  Step ±{step}°",
+        (620, 258),
+        ui.C_MUTED,
+        "small",
+    )
     if ch1.get("align_feedback"):
-        ui.label(surface, fonts, ch1["align_feedback"], (620, 260), ui.C_AMBER, "body")
+        ui.label(surface, fonts, ui.truncate(ch1["align_feedback"], 62), (620, 282), ui.C_AMBER, "small")
 
-    ui.label(surface, fonts, "TRANSMISSION PACKETS", (620, 300), ui.C_CYAN, "body")
-    for i in range(PACKETS_NEEDED):
-        slot = pygame.Rect(620 + i * 90, 340, 70, 50)
-        filled = i < ch1["packets"]
-        pygame.draw.rect(surface, ui.C_SURFACE, slot, border_radius=8)
-        pygame.draw.rect(surface, ui.C_GREEN if filled else ui.C_EDGE, slot, 2, border_radius=8)
-        if filled:
-            ui.icon_bolt(surface, slot.center, ui.C_CYAN)
-        if ch1["phase"] == "packets" and i == ch1["packets"] and ch1["packet_timer"] > 0:
-            ui.meter(surface, pygame.Rect(slot.x, slot.bottom + 6, slot.w, 8), ch1["packet_timer"], 0.85, ui.C_AMBER)
+    if not practice:
+        ui.label(surface, fonts, "TRANSMISSION PACKETS", (620, 318), ui.C_CYAN, "body")
+        for i in range(PACKETS_NEEDED):
+            slot = pygame.Rect(620 + i * 90, 350, 70, 50)
+            filled = i < ch1["packets"]
+            pygame.draw.rect(surface, ui.C_SURFACE, slot, border_radius=8)
+            pygame.draw.rect(surface, ui.C_GREEN if filled else ui.C_EDGE, slot, 2, border_radius=8)
+            if filled:
+                ui.icon_bolt(surface, slot.center, ui.C_CYAN)
+            if ch1["phase"] == "packets" and i == ch1["packets"] and ch1["packet_timer"] > 0:
+                ui.meter(surface, pygame.Rect(slot.x, slot.bottom + 6, slot.w, 8), ch1["packet_timer"], 0.7, ui.C_AMBER)
 
-    left = pygame.Rect(620, 440, 140, 50)
-    right = pygame.Rect(900, 440, 140, 50)
-    ui.button(surface, left, "◀ −5°", fonts, mouse_pos)
-    ui.button(surface, right, "+5° ▶", fonts, mouse_pos)
+    left = pygame.Rect(620, 440 if not practice else 360, 140, 50)
+    right = pygame.Rect(900, 440 if not practice else 360, 140, 50)
+    ui.button(surface, left, f"◀ −{step}°", fonts, mouse_pos)
+    ui.button(surface, right, f"+{step}° ▶", fonts, mouse_pos)
+    ui.label(surface, fonts, "Keyboard: ← Left   → Right", (620, left.bottom + 12), ui.C_MUTED, "small")
 
     if ch1["connection_restored"]:
-        ui.centered(surface, fonts, "CONNECTION RESTORED", (840, 560), ui.C_GREEN, "title")
-    elif ch1["hint"]:
-        ui.centered(surface, fonts, ch1["hint"], (840, 560), ui.C_AMBER, "body")
+        ui.centered(surface, fonts, "COMMUNICATION ESTABLISHED", (840, 540), ui.C_GREEN, "title")
+    elif ch1["hint"] and not practice:
+        ui.centered(surface, fonts, ui.truncate(ch1["hint"], 70), (840, 540), ui.C_AMBER, "body")
     return {"left": left, "right": right}
 
 
@@ -621,7 +710,12 @@ def draw_timeout(surface, fonts, mouse_pos):
     return ui.result_panel(
         surface, fonts, mouse_pos,
         "TIME IS UP!",
-        ["The dust storm scrambled the signal again.", "Retry — your materials stay in inventory."],
+        [
+            "The dust storm scrambled the signal again.",
+            "Tip: watch the signal band — move into STABLE, then hold for packets.",
+            "Use the green target cue and LEFT/RIGHT adjustments.",
+            "Retry returns to the antenna briefing (practice has no time penalty).",
+        ],
         ok=False,
         btn_label="RETRY CHALLENGE",
     )

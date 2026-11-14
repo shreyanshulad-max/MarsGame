@@ -57,7 +57,17 @@ def _kit_cost(missing: list[str]) -> int:
 def _incomplete_tier_tasks(campaign: dict) -> list[dict]:
     tier = campaign.get("research_tier", 1)
     done = set(campaign.get("research_tasks_completed", []))
-    return [t for t in rtasks.tasks_for_tier(tier) if t["id"] not in done]
+    # Prefer core clearance tasks for the active mission
+    active = camp.active_mission_id(campaign)
+    if active:
+        core = []
+        for tid in camp.CLEARANCE_TASKS.get(active, []):
+            t = rtasks.get_task(tid)
+            if t and tid not in done and t["tier"] <= tier:
+                core.append(t)
+        if core:
+            return core
+    return [t for t in rtasks.tasks_for_mission_tier(tier) if t["id"] not in done]
 
 
 def _find_cache_for_material(colony: dict, discovery: dict, mid: str) -> dict | None:
@@ -179,17 +189,16 @@ def resolve_objective(
                     "icon": "supply",
                 }
 
-    # 1 & 3: need research if RP insufficient for missing kit
-    if missing and rp < cost:
-        need = cost - rp
+    # Research clearance before procurement
+    if not camp.research_clearance_granted(campaign, next_mission) or incomplete:
         task = (
-            f"Complete research tasks — need {need} more RP for {meta['name']} kit."
+            f"Complete {meta['name']} research clearance ({len(incomplete)} remaining)."
             if incomplete
-            else f"Need {need} more RP for the {meta['name']} kit."
+            else f"Finish research clearance for {meta['name']}."
         )
         return {
             "kind": "research",
-            "title": "Earn Research Points",
+            "title": "Research Clearance",
             "task": task,
             "dest_name": "Research Terminal",
             "x": research_pos[0],
@@ -198,7 +207,21 @@ def resolve_objective(
             "icon": "research",
         }
 
-    # 2: missing materials but enough RP → procurement (preferred over hidden caches)
+    # Need RP for remaining kit purchases
+    if missing and rp < cost:
+        need = cost - rp
+        return {
+            "kind": "research",
+            "title": "Earn Research Points",
+            "task": f"Need {need} more RP for the {meta['name']} kit.",
+            "dest_name": "Research Terminal",
+            "x": research_pos[0],
+            "y": research_pos[1],
+            "exact": True,
+            "icon": "research",
+        }
+
+    # Missing materials with clearance + enough RP → procurement
     if missing and rp >= cost:
         return {
             "kind": "shop",

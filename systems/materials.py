@@ -130,6 +130,33 @@ MISSION_REQUIREMENTS = {
     "ch3": ["servo_motor", "battery_cell", "lubricant", "metal_bracket"],
 }
 
+# Campaign mission_id -> required materials (source of truth for spawn / store / readiness)
+MISSION_KITS = {
+    "mission_1": {"copper_wire": 1, "signal_amplifier": 1, "spare_fuse": 1},
+    "mission_2": {"insulated_cable": 1, "spare_fuse": 1},
+    "mission_3": {"servo_motor": 1, "battery_cell": 1, "lubricant": 1, "metal_bracket": 1},
+}
+
+MISSION_CHALLENGE = {
+    "mission_1": "ch1",
+    "mission_2": "ch2",
+    "mission_3": "ch3",
+}
+
+
+def required_quantities_for_mission(mission_id: str) -> dict[str, int]:
+    return dict(MISSION_KITS.get(mission_id, {}))
+
+
+def material_pool_for_mission(mission_id: str) -> list[str]:
+    return list(MISSION_KITS.get(mission_id, {}).keys())
+
+
+def world_pickups_for_mission(mission_id: str) -> list[dict]:
+    """Fixed world pickups that belong only to the given mission kit."""
+    pool = set(material_pool_for_mission(mission_id))
+    return [p for p in WORLD_PICKUPS if p["material"] in pool]
+
 
 def empty_stock() -> dict:
     """qty + reserved for each material id."""

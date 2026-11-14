@@ -11,7 +11,7 @@ MANIFEST_PATH = DATA_ROOT / "research_manifest.json"
 
 
 def ensure_dirs() -> None:
-    for sub in ("hirise", "mola", "perseverance", "metadata", "thumbnails"):
+    for sub in ("hirise", "mola", "meda", "themis", "perseverance", "solar", "metadata", "thumbnails"):
         (DATA_ROOT / sub).mkdir(parents=True, exist_ok=True)
 
 
@@ -69,9 +69,14 @@ def item_available(item: dict | None) -> bool:
         return False
     if item.get("status") == "unavailable":
         return False
-    if item.get("data_type") == "numeric_profile":
+    if item.get("data_type") in ("numeric_profile", "timeline"):
         return bool(item.get("values")) and item.get("fabricated") is not True
-    return resolve_path(item) is not None
+    if item.get("data_type") == "context_note" and item.get("status") == "available":
+        return item.get("fabricated") is not True
+    # Browse / thermal image: available when local file exists (even if status pending_download)
+    if resolve_path(item) is not None:
+        return item.get("fabricated") is not True
+    return False
 
 
 def load_image_surface(item: dict):

@@ -18,10 +18,14 @@ if _ROOT not in sys.path:
 
 from systems import audio_fx
 from systems import camera as cam_sys
+from systems import antenna_tutorial as atut
 from systems import challenges_ch1 as ch1mod
 from systems import challenges_ch2 as ch2mod
 from systems import challenges_ch3 as ch3mod
 from systems import challenge_ui as chal_ui
+from systems import mission_debrief as debrief_sys
+from systems import outpost as outpost_sys
+from systems import outpost_ui
 from systems import colony as colony_sys
 from systems import hud_explore
 from systems import interactions
@@ -71,7 +75,10 @@ SCREEN_BASE = "base"                # entered the Mars research base
 SCREEN_CH1_DIAG = "ch1_diag"        # Challenge 1: diagnose symptoms
 SCREEN_CH1_ASSEMBLE = "ch1_assemble"  # antenna component assembly
 SCREEN_CH1_RADAR = "ch1_radar"      # radar signal investigation
-SCREEN_CH1_ALIGN = "ch1_align"      # antenna calibration + packets
+SCREEN_CH1_BRIEF = "ch1_brief"      # antenna briefing (no timer)
+SCREEN_CH1_PRACTICE = "ch1_practice"  # guided practice (no timer)
+SCREEN_CH1_READY = "ch1_ready"      # confirm before timed calibration
+SCREEN_CH1_ALIGN = "ch1_align"      # timed antenna calibration + packets
 SCREEN_CH1_COMPLETE = "ch1_complete"
 SCREEN_CH1_TIMEOUT = "ch1_timeout"
 SCREEN_CH2_INTRO = "ch2_intro"      # Challenge 2: power failure story
@@ -93,16 +100,22 @@ SCREEN_DASHBOARD = "dashboard"
 SCREEN_MISSION_REPORT = "mission_report"
 SCREEN_FINAL_REPORT = "final_report"
 SCREEN_LOCKED = "mission_locked"
+SCREEN_NEW_CAMPAIGN = "new_campaign_confirm"
+SCREEN_MISSION_PREP = "mission_prep"
+SCREEN_RECORDS = "mission_records"
+SCREEN_OUTPOST = "outpost"
+SCREEN_DEBRIEF = "mission_debrief"
 
 CH1_ACTIVE = (SCREEN_CH1_DIAG, SCREEN_CH1_ASSEMBLE, SCREEN_CH1_RADAR, SCREEN_CH1_ALIGN)
+CH1_TIMED = (SCREEN_CH1_ALIGN,)  # countdown only during timed calibration
 CH2_ACTIVE = (SCREEN_CH2_WIRE, SCREEN_CH2_POWER)
 CH3_ACTIVE = (
     SCREEN_CH3_SCAN, SCREEN_CH3_DIAG, SCREEN_CH3_REPAIR, SCREEN_CH3_ROUTE, SCREEN_CH3_DRIVE
 )
 
-# ---- Challenge 1 settings ----
-CH1_TIME_LIMIT = 90          # seconds on the mission timer
-ANTENNA_START_ANGLE = -30    # degrees
+# ---- Challenge 1 settings (authoritative values live in challenges_ch1) ----
+CH1_TIME_LIMIT = 120         # timed calibration only
+ANTENNA_START_ANGLE = 5      # near target for forgiving start
 ANTENNA_TARGET_ANGLE = 20    # degrees
 ANTENNA_STEP = 5             # how far Left/Right moves the dish
 CH1_POINTS = 100
@@ -1153,22 +1166,25 @@ def main():
     _signal_t = 0.0
     tut_sys.trigger(tutorials, "inventory")
 
-    # ---- Campaign save / load ----
+    # ---- Campaign save / load (never auto-create / overwrite on failure) ----
+    save_load_error = None
+    recovery_info = savegame.recovery_needed()
+    loaded = None
     try:
         loaded = savegame.load_campaign()
     except ValueError as exc:
         print("SAVE WARNING:", exc)
-        loaded = None
-    if loaded is None:
-        campaign = camp.make_campaign()
-    else:
+        save_load_error = str(exc)
+        recovery_info = savegame.recovery_needed() or {"message": str(exc)}
+
+    campaign = None
+    has_campaign_save = loaded is not None
+    if loaded is not None:
         campaign = loaded
-        # Restore inventory stock
         for mid, slot in (campaign.get("inventory_stock") or {}).items():
             if mid in inventory["stock"] and isinstance(slot, dict):
                 inventory["stock"][mid]["qty"] = int(slot.get("qty", 0))
-                inventory["stock"][mid]["reserved"] = 0  # clear mid-assembly locks on load
-        # Restore discovery
+                inventory["stock"][mid]["reserved"] = 0
         for z in campaign.get("discovered_locations") or []:
             discovery["landmarks"].add(z)
         for key in campaign.get("discovery_revealed") or []:
@@ -1177,15 +1193,69 @@ def main():
             discovery["identified"].add(uid)
         for uid in campaign.get("discovery_scanned") or []:
             discovery["scanned_ids"].add(uid)
+        if campaign.get("current_player_position"):
+            try:
+                px, py = campaign["current_player_position"]
+                astronaut["x"], astronaut["y"] = float(px), float(py)
+                cam_sys.update_camera(camera, astronaut, 1.0, WORLD_W, WORLD_H)
+            except (TypeError, ValueError):
+                pass
+
+    # Placeholder until Continue / New Campaign — do not persist empty campaign on boot
+    if campaign is None:
+        campaign = camp.make_campaign()
+        has_campaign_save = False
 
     cache_sys.ensure_campaign_caches(campaign)
-    cache_sys.apply_caches_to_colony(colony, campaign["randomized_cache_records"])
+    cache_sys.refresh_colony_supplies(colony, campaign)
+    outpost_sys.ensure_outpost(campaign)
+
+    replay_ctx = None  # practice isolation snapshot
+    campaign_inventory = inventory  # permanent inventory reference
+    title_hit = {}
+    newcamp_hit = {}
+    prep_hit = {}
+    records_hit = {}
+    outpost_hit = {}
+    debrief_hit = {}
+    debrief_mission_id = "mission_1"
+    prep_mission_id = "mission_1"
+    pending_station_screen = SCREEN_CH1_DIAG
 
     def persist():
+        if replay_ctx is not None:
+            return False  # never write practice mutations over campaign save
+        if not has_campaign_save:
+            return False
+        campaign["current_player_position"] = [astronaut["x"], astronaut["y"]]
+        campaign["total_play_time"] = float(campaign.get("total_play_time", 0.0)) + 0.0
         data = camp.export_for_save(campaign, inventory["stock"], discovery)
-        savegame.save_campaign(data)
+        return savegame.save_campaign(data)
 
-    persist()  # ensure file exists
+    def apply_loaded_campaign(data: dict, reset_world: bool = False):
+        nonlocal campaign, inventory, campaign_inventory, has_campaign_save, discovery, astronaut, camera
+        nonlocal communication_status, power_status, food_status, rover_status, score, progression
+        campaign = data
+        has_campaign_save = True
+        inventory = inv_sys.make_inventory()
+        for mid, slot in (campaign.get("inventory_stock") or {}).items():
+            if mid in inventory["stock"] and isinstance(slot, dict):
+                inventory["stock"][mid]["qty"] = int(slot.get("qty", 0))
+        campaign_inventory = inventory
+        if reset_world:
+            discovery = map_sys.make_discovery(colony["spawn"])
+            map_sys.reveal_around(discovery, colony["spawn"][0], colony["spawn"][1], radius=320)
+            astronaut = player_sys.make_astronaut(colony["spawn"])
+            camera = cam_sys.make_camera(astronaut, WIDTH, HEIGHT)
+            cam_sys.clamp_camera(camera, WORLD_W, WORLD_H)
+            # Clear prior material pickups then respawn for new seed
+            colony["collectibles"] = [c for c in colony["collectibles"] if not c.get("material")]
+            stations = [x for x in colony.get("interactables", []) if x.get("type") == "station"]
+            colony["interactables"] = stations + colony["collectibles"]
+        cache_sys.ensure_campaign_caches(campaign)
+        cache_sys.refresh_colony_supplies(colony, campaign)
+        progression = campaign["cross"]
+        refresh_status()
 
     research_ui = research_term.make_ui_state()
     research_hit = {}
@@ -1213,13 +1283,72 @@ def main():
         communication_status, power_status, food_status, rover_status = camp.sync_status_flags(campaign)
         score = campaign["mission_score"]
 
+    def begin_mission_challenge(mid: str, default_screen: str):
+        nonlocal current_screen, ch1, ch2, ch3, inventory
+        if replay_ctx is None:
+            camp.mark_in_progress(campaign, mid)
+        if mid == "mission_1":
+            ch1 = make_challenge1_state()
+            if replay_ctx is None:
+                journal_sys.add_clue(journal, "ch1_symptom_weak")
+            tut_sys.trigger(tutorials, "assembly")
+        elif mid == "mission_2":
+            ch2 = make_challenge2_state()
+            if replay_ctx is None:
+                journal_sys.add_clue(journal, "ch2_path")
+        elif mid == "mission_3":
+            ch3 = make_challenge3_state()
+            apply_ch3_scan_bonus()
+            tut_sys.trigger(tutorials, "assembly")
+        current_screen = default_screen
+        if replay_ctx is None:
+            persist()
+
+    def start_replay(mid: str):
+        nonlocal replay_ctx, inventory, report_mission_id
+        replay_ctx = camp.begin_replay(campaign, mid)
+        inventory = camp.practice_inventory_for(mid)
+        meta = camp.MISSION_META[mid]
+        begin_mission_challenge(mid, meta["screen"])
+        notify_sys.push(notifier, "PRACTICE / REPLAY — no campaign rewards", "info")
+
+    def end_replay_session():
+        nonlocal replay_ctx, inventory
+        if replay_ctx is None:
+            return
+        camp.end_replay(campaign, replay_ctx)
+        replay_ctx = None
+        inventory = campaign_inventory
+        # Restore stock from campaign after replay restore
+        for mid, slot in (campaign.get("inventory_stock") or {}).items():
+            if mid in inventory["stock"] and isinstance(slot, dict):
+                inventory["stock"][mid]["qty"] = int(slot.get("qty", 0))
+                inventory["stock"][mid]["reserved"] = 0
+        refresh_status()
+
+    def award_mission_if_campaign(mid: str, report: dict):
+        """Complete mission only outside replay practice."""
+        nonlocal debrief_mission_id
+        if replay_ctx is not None:
+            return {"awarded": False, "message": "Practice complete — no campaign rewards."}
+        award = camp.complete_mission(campaign, mid, report)
+        refresh_status()
+        cache_sys.refresh_colony_supplies(colony, campaign)
+        if award.get("awarded"):
+            debrief_mission_id = mid
+        persist()
+        return award
+
     def open_station(station_id: str, default_screen: str):
-        """Central unlock / completion gate for challenge stations."""
-        nonlocal current_screen, report_mission_id, locked_reason, ch1, ch2, ch3
+        """Central unlock / completion / readiness gate for challenge stations."""
+        nonlocal current_screen, report_mission_id, locked_reason, prep_mission_id, pending_station_screen
         mid = camp.station_to_mission(station_id)
         if mid is None:
-            # research / shop
             current_screen = default_screen
+            return
+        if not has_campaign_save:
+            locked_reason = "Start or continue a campaign from the title screen first."
+            current_screen = SCREEN_LOCKED
             return
         st = camp.mission_status(campaign, mid)
         if st == camp.STATUS_COMPLETED:
@@ -1230,21 +1359,14 @@ def main():
             locked_reason = camp.lock_reason(campaign, mid)
             current_screen = SCREEN_LOCKED
             return
-        # Available / in progress
-        camp.mark_in_progress(campaign, mid)
-        if mid == "mission_1":
-            ch1 = make_challenge1_state()
-            journal_sys.add_clue(journal, "ch1_symptom_weak")
-            tut_sys.trigger(tutorials, "assembly")
-        elif mid == "mission_2":
-            ch2 = make_challenge2_state()
-            journal_sys.add_clue(journal, "ch2_path")
-        elif mid == "mission_3":
-            ch3 = make_challenge3_state()
-            apply_ch3_scan_bonus()
-            tut_sys.trigger(tutorials, "assembly")
-        current_screen = default_screen
-        persist()
+        # Available / in progress — require research + materials before start
+        prep_mission_id = mid
+        pending_station_screen = default_screen
+        ready = camp.mission_readiness(campaign, inventory["stock"], mid)
+        if ready["can_start"]:
+            begin_mission_challenge(mid, default_screen)
+        else:
+            current_screen = SCREEN_MISSION_PREP
 
     # Buttons that change each frame on challenge screens
     ch1_diag_ui = {"symptoms": {}, "continue": pygame.Rect(0, 0, 0, 0)}
@@ -1259,6 +1381,8 @@ def main():
         "continue": pygame.Rect(0, 0, 0, 0),
     }
     align_ui = {"left": pygame.Rect(0, 0, 0, 0), "right": pygame.Rect(0, 0, 0, 0)}
+    brief_hit = {}
+    ready_hit = {}
     return_button = pygame.Rect(0, 0, 0, 0)
     retry_button = pygame.Rect(0, 0, 0, 0)
     ch2_intro_start = pygame.Rect(0, 0, 0, 0)
@@ -1283,7 +1407,13 @@ def main():
     ch3_timeout_ui = {"retry": pygame.Rect(0, 0, 0, 0), "base": pygame.Rect(0, 0, 0, 0)}
 
     def sync_inventory_highlight():
-        if current_screen in CH1_ACTIVE or current_screen == SCREEN_CH1_TIMEOUT:
+        if current_screen in (
+            *CH1_ACTIVE,
+            SCREEN_CH1_BRIEF,
+            SCREEN_CH1_PRACTICE,
+            SCREEN_CH1_READY,
+            SCREEN_CH1_TIMEOUT,
+        ):
             inventory["highlight_mission"] = "ch1"
         elif current_screen in CH2_ACTIVE or current_screen in (SCREEN_CH2_INTRO, SCREEN_CH2_TIMEOUT):
             inventory["highlight_mission"] = "ch2"
@@ -1303,10 +1433,14 @@ def main():
     def return_to_colony():
         """Leave a challenge and restore exploration at the saved world position."""
         nonlocal current_screen
+        if replay_ctx is not None:
+            end_replay_session()
+            notify_sys.push(notifier, "Exited practice replay", "info")
         if saved_base_pos is not None:
             astronaut["x"], astronaut["y"] = saved_base_pos
         cam_sys.update_camera(camera, astronaut, 1.0, WORLD_W, WORLD_H)
         current_screen = SCREEN_BASE
+        persist()
 
     running = True
     while running:
@@ -1317,6 +1451,9 @@ def main():
         # ---- events ----
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                if replay_ctx is not None:
+                    end_replay_session()
+                persist()
                 running = False
 
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
@@ -1345,6 +1482,9 @@ def main():
 
             elif event.type == pygame.KEYDOWN and current_screen == SCREEN_BASE and paused:
                 if event.key == pygame.K_q:
+                    if replay_ctx is not None:
+                        end_replay_session()
+                    persist()
                     running = False
 
             elif (
@@ -1374,6 +1514,12 @@ def main():
                     journal["open"] = False
                     map_open = False
                     current_screen = SCREEN_DASHBOARD
+                elif event.key == pygame.K_o:
+                    inventory["open"] = False
+                    journal["open"] = False
+                    map_open = False
+                    outpost_sys.ensure_outpost(campaign)
+                    current_screen = SCREEN_OUTPOST
                 elif event.key == pygame.K_g:
                     guidance["enabled"] = not guidance["enabled"]
                     notify_sys.push(
@@ -1408,6 +1554,7 @@ def main():
                                 active_target["status"] = "collected"
                                 discovery["identified"].add(active_target["id"])
                                 discovery["scanned_ids"].add(active_target["id"])
+                                cache_sys.mark_collected(campaign, active_target["id"])
                                 player_sys.set_anim(astronaut, "collect", 0.45)
                                 particle_sys.emit_pickup(
                                     fx, active_target["pos"][0], active_target["pos"][1]
@@ -1418,10 +1565,12 @@ def main():
                                 scanner_sys.try_identify_nearby(astronaut, colony, discovery)
                                 persist()
 
-            elif event.type == pygame.KEYDOWN and current_screen == SCREEN_CH1_ALIGN:
-                if event.key == pygame.K_LEFT:
+            elif event.type == pygame.KEYDOWN and current_screen in (
+                SCREEN_CH1_ALIGN, SCREEN_CH1_PRACTICE
+            ):
+                if event.key == pygame.K_LEFT or event.key == pygame.K_a:
                     rotate_antenna(ch1, -1)
-                elif event.key == pygame.K_RIGHT:
+                elif event.key == pygame.K_RIGHT or event.key == pygame.K_d:
                     rotate_antenna(ch1, 1)
 
             elif event.type == pygame.KEYDOWN and current_screen == SCREEN_CH3_DRIVE:
@@ -1430,18 +1579,17 @@ def main():
                     if try_ch3_rescue(ch3):
                         if not ch3["points_awarded"]:
                             ch3["points_awarded"] = True
-                            award = camp.complete_mission(
-                                campaign,
+                            award = award_mission_if_campaign(
                                 "mission_3",
                                 {
                                     "time_left": int(ch3.get("finish_time_left", 0)),
                                     "summary": f"Route {ch3.get('route')}; rover rescued.",
                                 },
                             )
-                            refresh_status()
-                            persist()
                             if award.get("awarded"):
                                 audio_fx.play("success", 0.5)
+                            elif replay_ctx is not None:
+                                notify_sys.push(notifier, "Practice rescue complete", "success")
 
             # Allow I/J during challenges for materials / clues
             elif event.type == pygame.KEYDOWN and current_screen != SCREEN_BASE:
@@ -1494,11 +1642,60 @@ def main():
                 if map_open and current_screen == SCREEN_BASE:
                     continue
 
-                if current_screen == SCREEN_TITLE and start_button.collidepoint(pos):
-                    current_screen = SCREEN_BRIEFING
+                if current_screen == SCREEN_TITLE:
+                    if title_hit.get("continue") and title_hit["continue"].collidepoint(pos):
+                        if has_campaign_save and not recovery_info:
+                            current_screen = SCREEN_BRIEFING
+                    elif title_hit.get("completed") and title_hit["completed"].collidepoint(pos):
+                        current_screen = SCREEN_FINAL_REPORT
+                    elif title_hit.get("final") and title_hit["final"].collidepoint(pos):
+                        current_screen = SCREEN_FINAL_REPORT
+                    elif title_hit.get("records") and title_hit["records"].collidepoint(pos):
+                        current_screen = SCREEN_RECORDS
+                    elif title_hit.get("new") and title_hit["new"].collidepoint(pos):
+                        current_screen = SCREEN_NEW_CAMPAIGN
+                    elif title_hit.get("quit") and title_hit["quit"].collidepoint(pos):
+                        persist()
+                        running = False
+
+                elif current_screen == SCREEN_NEW_CAMPAIGN:
+                    if newcamp_hit.get("cancel") and newcamp_hit["cancel"].collidepoint(pos):
+                        current_screen = SCREEN_TITLE
+                    elif newcamp_hit.get("confirm") and newcamp_hit["confirm"].collidepoint(pos):
+                        prev = campaign if has_campaign_save else None
+                        data = savegame.archive_and_start_new(prev)
+                        apply_loaded_campaign(data, reset_world=True)
+                        campaign_inventory = inventory
+                        recovery_info = None
+                        current_screen = SCREEN_BRIEFING
+
+                elif current_screen == SCREEN_RECORDS:
+                    if records_hit.get("close") and records_hit["close"].collidepoint(pos):
+                        current_screen = SCREEN_TITLE
+
+                elif current_screen == SCREEN_MISSION_PREP:
+                    if prep_hit.get("close") and prep_hit["close"].collidepoint(pos):
+                        return_to_colony()
+                    elif prep_hit.get("can_start") and prep_hit.get("start") and prep_hit["start"].collidepoint(pos):
+                        begin_mission_challenge(prep_mission_id, pending_station_screen)
 
                 elif current_screen == SCREEN_BRIEFING and continue_button.collidepoint(pos):
-                    astronaut = player_sys.make_astronaut(colony["spawn"])
+                    if not has_campaign_save:
+                        has_campaign_save = True
+                        campaign["campaign_started"] = True
+                        cache_sys.ensure_campaign_caches(campaign)
+                        cache_sys.refresh_colony_supplies(colony, campaign)
+                        persist()
+                    spawn = colony["spawn"]
+                    if campaign.get("current_player_position"):
+                        try:
+                            spawn = (
+                                float(campaign["current_player_position"][0]),
+                                float(campaign["current_player_position"][1]),
+                            )
+                        except (TypeError, ValueError, IndexError):
+                            spawn = colony["spawn"]
+                    astronaut = player_sys.make_astronaut(spawn)
                     camera = cam_sys.make_camera(astronaut, WIDTH, HEIGHT)
                     cam_sys.clamp_camera(camera, WORLD_W, WORLD_H)
                     saved_base_pos = None
@@ -1512,8 +1709,34 @@ def main():
 
                 elif current_screen == SCREEN_CH1_RADAR:
                     next_phase = ch1mod.handle_radar_event(ch1, event, radar_ui)
-                    if next_phase == "align":
+                    if next_phase == "briefing":
+                        current_screen = SCREEN_CH1_BRIEF
+                    elif next_phase == "align":
+                        # Legacy path — still go through briefing
+                        current_screen = SCREEN_CH1_BRIEF
+
+                elif current_screen == SCREEN_CH1_BRIEF:
+                    if brief_hit.get("practice") and brief_hit["practice"].collidepoint(pos):
+                        atut.reset_practice(ch1)
+                        current_screen = SCREEN_CH1_PRACTICE
+
+                elif current_screen == SCREEN_CH1_PRACTICE:
+                    if align_ui.get("left") and align_ui["left"].collidepoint(pos):
+                        rotate_antenna(ch1, -1)
+                    elif align_ui.get("right") and align_ui["right"].collidepoint(pos):
+                        rotate_antenna(ch1, 1)
+                    elif align_ui.get("repeat") and align_ui["repeat"].width > 0 and align_ui["repeat"].collidepoint(pos):
+                        atut.reset_practice(ch1)
+                    elif align_ui.get("start_mission") and align_ui["start_mission"].width > 0 and align_ui["start_mission"].collidepoint(pos):
+                        current_screen = SCREEN_CH1_READY
+
+                elif current_screen == SCREEN_CH1_READY:
+                    if ready_hit.get("start") and ready_hit["start"].collidepoint(pos):
+                        atut.begin_timed_mission(ch1)
                         current_screen = SCREEN_CH1_ALIGN
+                    elif ready_hit.get("practice") and ready_hit["practice"].collidepoint(pos):
+                        atut.reset_practice(ch1)
+                        current_screen = SCREEN_CH1_PRACTICE
 
                 elif current_screen == SCREEN_CH1_ALIGN:
                     if align_ui["left"].collidepoint(pos):
@@ -1522,7 +1745,11 @@ def main():
                         rotate_antenna(ch1, 1)
 
                 elif current_screen == SCREEN_CH1_COMPLETE and return_button.collidepoint(pos):
-                    return_to_colony()
+                    if campaign.get("last_debrief_mission") == "mission_1" and replay_ctx is None:
+                        debrief_mission_id = "mission_1"
+                        current_screen = SCREEN_DEBRIEF
+                    else:
+                        return_to_colony()
 
                 elif current_screen == SCREEN_CH1_TIMEOUT and retry_button.collidepoint(pos):
                     if camp.is_completed(campaign, "mission_1"):
@@ -1530,8 +1757,12 @@ def main():
                         current_screen = SCREEN_MISSION_REPORT
                     else:
                         mats.release_all_reserved(inventory["stock"])
-                        ch1 = make_challenge1_state()
-                        current_screen = SCREEN_CH1_DIAG
+                        # Retry returns to briefing — materials already committed only if assembly passed
+                        ch1["timer_running"] = False
+                        ch1["connection_restored"] = False
+                        ch1["points_awarded"] = False
+                        ch1["packets"] = 0
+                        current_screen = SCREEN_CH1_BRIEF
 
                 elif current_screen == SCREEN_CH2_INTRO and ch2_intro_start.collidepoint(pos):
                     current_screen = SCREEN_CH2_WIRE
@@ -1556,7 +1787,11 @@ def main():
                                 ch2_change_power(ch2, key, 10)
 
                 elif current_screen == SCREEN_CH2_COMPLETE and return_button.collidepoint(pos):
-                    return_to_colony()
+                    if campaign.get("last_debrief_mission") == "mission_2" and replay_ctx is None:
+                        debrief_mission_id = "mission_2"
+                        current_screen = SCREEN_DEBRIEF
+                    else:
+                        return_to_colony()
 
                 elif current_screen == SCREEN_CH2_TIMEOUT:
                     if ch2_timeout_ui["retry"].collidepoint(pos):
@@ -1620,7 +1855,25 @@ def main():
                         current_screen = SCREEN_CH3_DRIVE
 
                 elif current_screen == SCREEN_CH3_COMPLETE and return_button.collidepoint(pos):
-                    return_to_colony()
+                    if campaign.get("last_debrief_mission") == "mission_3" and replay_ctx is None:
+                        debrief_mission_id = "mission_3"
+                        current_screen = SCREEN_DEBRIEF
+                    else:
+                        return_to_colony()
+
+                elif current_screen == SCREEN_DEBRIEF:
+                    if debrief_hit.get("close") and debrief_hit["close"].collidepoint(pos):
+                        campaign["last_debrief_mission"] = None
+                        persist()
+                        return_to_colony()
+
+                elif current_screen == SCREEN_OUTPOST:
+                    close, msg = outpost_ui.handle_click(campaign, outpost_hit, pos)
+                    if msg:
+                        notify_sys.push(notifier, msg, "info")
+                        persist()
+                    if close:
+                        return_to_colony()
 
                 elif current_screen == SCREEN_CH3_TIMEOUT:
                     if ch3_timeout_ui["retry"].collidepoint(pos):
@@ -1670,16 +1923,30 @@ def main():
                     elif dash_hit.get("shop") and dash_hit["shop"].collidepoint(pos):
                         shop_ui["selected"] = None
                         current_screen = SCREEN_SHOP
+                    elif dash_hit.get("outpost") and dash_hit["outpost"].collidepoint(pos):
+                        outpost_sys.ensure_outpost(campaign)
+                        current_screen = SCREEN_OUTPOST
+                    elif dash_hit.get("records") and dash_hit["records"].collidepoint(pos):
+                        current_screen = SCREEN_RECORDS
                     elif dash_hit.get("final") and dash_hit["final"].collidepoint(pos):
                         current_screen = SCREEN_FINAL_REPORT
+                    elif dash_hit.get("new") and dash_hit["new"].collidepoint(pos):
+                        current_screen = SCREEN_NEW_CAMPAIGN
 
                 elif current_screen == SCREEN_MISSION_REPORT:
-                    if report_hit.get("close") and report_hit["close"].collidepoint(pos):
+                    if report_hit.get("replay") and report_hit["replay"].collidepoint(pos):
+                        start_replay(report_mission_id)
+                    elif report_hit.get("close") and report_hit["close"].collidepoint(pos):
                         return_to_colony()
 
                 elif current_screen == SCREEN_FINAL_REPORT:
-                    if report_hit.get("close") and report_hit["close"].collidepoint(pos):
-                        return_to_colony()
+                    if report_hit.get("new") and report_hit["new"].collidepoint(pos):
+                        current_screen = SCREEN_NEW_CAMPAIGN
+                    elif report_hit.get("close") and report_hit["close"].collidepoint(pos):
+                        if has_campaign_save:
+                            return_to_colony()
+                        else:
+                            current_screen = SCREEN_TITLE
 
                 elif current_screen == SCREEN_LOCKED:
                     if locked_hit.get("close") and locked_hit["close"].collidepoint(pos):
@@ -1690,6 +1957,11 @@ def main():
                     ch3mod.handle_repair_event(ch3, event, ch3_repair_ui, inventory)
 
         # ---- update ----
+        if has_campaign_save and replay_ctx is None:
+            campaign["total_play_time"] = float(campaign.get("total_play_time", 0.0)) + max(0.0, dt)
+            # Greenhouse grows slowly while exploring / in outpost view
+            if current_screen in (SCREEN_BASE, SCREEN_OUTPOST):
+                outpost_sys.tick_greenhouse(outpost_sys.ensure_outpost(campaign), dt)
         update_dust_particles(dust_particles)
         env_time += dt
         # Gentle sideways drift for mountain layers (not gameplay)
@@ -1772,11 +2044,16 @@ def main():
         else:
             guide_obj = guidance.get("objective")
 
-        # Challenge timers
-        if current_screen in CH1_ACTIVE and not ch1["connection_restored"]:
+        # Challenge timers — CH1 countdown only during confirmed timed calibration
+        if (
+            current_screen in CH1_TIMED
+            and ch1.get("timer_running")
+            and not ch1["connection_restored"]
+        ):
             ch1["time_left"] -= dt
             if ch1["time_left"] <= 0:
                 ch1["time_left"] = 0
+                ch1["timer_running"] = False
                 current_screen = SCREEN_CH1_TIMEOUT
 
         if current_screen in CH2_ACTIVE and not ch2["completed"]:
@@ -1801,18 +2078,20 @@ def main():
                 if not ch2["points_awarded"]:
                     ch2["points_awarded"] = True
                     bonuses = ch2mod.allocation_bonuses(ch2)
-                    camp.complete_mission(
-                        campaign,
+                    award_mission_if_campaign(
                         "mission_2",
                         {
                             "time_left": int(ch2.get("finish_time_left", 0)),
                             "summary": "Power circuit restored; allocation confirmed.",
                             "allocation_bonuses": bonuses,
                             "freshness": int(ch2.get("food_freshness", 0)),
+                            "power_allocation": {
+                                "life": int(ch2.get("life", 20)),
+                                "food": int(ch2.get("food", 20)),
+                                "comms": int(ch2.get("comms", 20)),
+                            },
                         },
                     )
-                    refresh_status()
-                    persist()
             if ch2["completed"]:
                 ch2["complete_delay"] -= dt
                 if ch2["complete_delay"] <= 0:
@@ -1821,22 +2100,25 @@ def main():
         # Challenge 1
         if current_screen == SCREEN_CH1_RADAR:
             ch1mod.update(ch1, dt, active_radar=True, active_align=False)
+        if current_screen == SCREEN_CH1_PRACTICE:
+            ch1mod.update(ch1, dt, active_radar=False, active_align=True)
         if current_screen == SCREEN_CH1_ALIGN:
             was_restored = ch1["connection_restored"]
             ch1mod.update(ch1, dt, active_radar=False, active_align=True)
             if ch1["connection_restored"] and not was_restored:
-                if not ch1["points_awarded"]:
+                if not ch1["points_awarded"] and ch1.get("align_mode") == "timed":
                     ch1["points_awarded"] = True
-                    camp.complete_mission(
-                        campaign,
+                    award_mission_if_campaign(
                         "mission_1",
                         {
                             "time_left": int(ch1.get("finish_time_left", 0)),
                             "summary": "SAT-02 link restored after repair + packets.",
+                            "debrief": (
+                                "Antenna pointing must match the satellite bearing. "
+                                "A stable radio link needs the dish inside a usable alignment window."
+                            ),
                         },
                     )
-                    refresh_status()
-                    persist()
             if ch1["connection_restored"] and ch1["restore_delay"] <= 0:
                 current_screen = SCREEN_CH1_COMPLETE
 
@@ -1902,12 +2184,35 @@ def main():
 
         if current_screen == SCREEN_TITLE:
             brand = fonts["title"].render("MARS MISSION", True, chal_ui.C_MARS)
-            screen.blit(brand, brand.get_rect(center=(WIDTH // 2, 210)))
+            screen.blit(brand, brand.get_rect(center=(WIDTH // 2, 180)))
             sub = fonts["body"].render("Restore · Recharge · Rescue", True, chal_ui.C_TEXT)
-            screen.blit(sub, sub.get_rect(center=(WIDTH // 2, 250)))
+            screen.blit(sub, sub.get_rect(center=(WIDTH // 2, 220)))
             tip = fonts["small"].render("A dust-stormed research colony awaits.", True, chal_ui.C_MUTED)
-            screen.blit(tip, tip.get_rect(center=(WIDTH // 2, 280)))
-            chal_ui.button(screen, start_button, "START MISSION", fonts, mouse_pos, accent=True)
+            screen.blit(tip, tip.get_rect(center=(WIDTH // 2, 250)))
+            if has_campaign_save and not recovery_info:
+                seed_tip = fonts["small"].render(
+                    f"Save found · seed {campaign.get('campaign_seed')} · score {campaign.get('mission_score', 0)}",
+                    True,
+                    chal_ui.C_SIGNAL,
+                )
+                screen.blit(seed_tip, seed_tip.get_rect(center=(WIDTH // 2, 280)))
+            title_hit = camp_ui.draw_title_menu(
+                screen, fonts, mouse_pos, has_campaign_save, campaign if has_campaign_save else None, recovery_info
+            )
+
+        elif current_screen == SCREEN_NEW_CAMPAIGN:
+            newcamp_hit = camp_ui.draw_new_campaign_confirm(screen, fonts, mouse_pos)
+
+        elif current_screen == SCREEN_RECORDS:
+            records_hit = camp_ui.draw_mission_records(
+                screen, fonts, mouse_pos, campaign if has_campaign_save else None
+            )
+
+        elif current_screen == SCREEN_MISSION_PREP:
+            hud()
+            prep_hit = camp_ui.draw_mission_prep(
+                screen, fonts, mouse_pos, campaign, inventory, prep_mission_id
+            )
 
         elif current_screen == SCREEN_BRIEFING:
             hud()
@@ -1978,24 +2283,37 @@ def main():
 
         elif current_screen == SCREEN_CH1_DIAG:
             hud()
-            draw_timer(screen, fonts, ch1["time_left"])
+            # Timer starts only after Calibration Ready confirmation
             ch1_diag_ui = ch1mod.draw_diagnose(screen, fonts, mouse_pos, ch1, journal)
 
         elif current_screen == SCREEN_CH1_ASSEMBLE:
             hud()
-            draw_timer(screen, fonts, ch1["time_left"])
             ch1_assemble_ui = ch1mod.draw_assemble(screen, fonts, mouse_pos, ch1, inventory)
             tut_sys.trigger(tutorials, "assembly")
 
         elif current_screen == SCREEN_CH1_RADAR:
             hud()
-            draw_timer(screen, fonts, ch1["time_left"])
+            # No mission countdown during radar investigation
             radar_ui = draw_radar_screen(screen, fonts, mouse_pos, ch1)
+
+        elif current_screen == SCREEN_CH1_BRIEF:
+            hud()
+            brief_hit = atut.draw_briefing(screen, fonts, mouse_pos)
+
+        elif current_screen == SCREEN_CH1_PRACTICE:
+            hud()
+            align_ui = atut.draw_practice(screen, fonts, mouse_pos, ch1)
+
+        elif current_screen == SCREEN_CH1_READY:
+            hud()
+            ready_hit = atut.draw_ready(screen, fonts, mouse_pos)
 
         elif current_screen == SCREEN_CH1_ALIGN:
             hud()
-            draw_timer(screen, fonts, ch1["time_left"])
+            if ch1.get("timer_running"):
+                draw_timer(screen, fonts, ch1["time_left"])
             align_ui = draw_alignment_screen(screen, fonts, mouse_pos, ch1)
+            atut.draw_control_reference(screen, fonts, mouse_pos)
 
         elif current_screen == SCREEN_CH1_COMPLETE:
             hud()
@@ -2097,6 +2415,16 @@ def main():
             hud()
             dash_hit = camp_ui.draw_dashboard(screen, fonts, mouse_pos, campaign, inventory)
 
+        elif current_screen == SCREEN_OUTPOST:
+            hud()
+            outpost_hit = outpost_ui.draw_dashboard(screen, fonts, mouse_pos, campaign)
+
+        elif current_screen == SCREEN_DEBRIEF:
+            hud()
+            debrief_hit = debrief_sys.draw_debrief(
+                screen, fonts, mouse_pos, campaign, debrief_mission_id
+            )
+
         elif current_screen == SCREEN_MISSION_REPORT:
             hud()
             report_hit = camp_ui.draw_mission_report(
@@ -2110,6 +2438,9 @@ def main():
         elif current_screen == SCREEN_LOCKED:
             hud()
             locked_hit = camp_ui.draw_locked_notice(screen, fonts, mouse_pos, locked_reason)
+
+        if replay_ctx is not None and current_screen not in (SCREEN_TITLE, SCREEN_BRIEFING, SCREEN_NEW_CAMPAIGN):
+            camp_ui.draw_replay_banner(screen, fonts)
 
         # Challenge overlays for inventory / journal / tips
         if current_screen != SCREEN_BASE:

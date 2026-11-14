@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
+from pathlib import Path
 
+# Never touch the player's live AppData save
+os.environ["MARS_MISSION_SAVE_DIR"] = tempfile.mkdtemp(prefix="marsmission_smoke_")
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
@@ -20,6 +24,8 @@ from systems import procurement as proc
 from systems import research_data as rdata
 from systems import research_tasks as rtasks
 from systems import savegame
+
+savegame.configure_paths(Path(os.environ["MARS_MISSION_SAVE_DIR"]))
 
 ok = fail = 0
 
@@ -61,9 +67,15 @@ check("rp no farm", not a2["awarded"] and c2["research_points"] == 40)
 
 print("=== Procurement ===")
 inv = inv_sys.make_inventory()
+# Grant Mission 1 clearance then fund purchases
+for tid in camp.CLEARANCE_TASKS["mission_1"]:
+    if tid not in c2["research_tasks_completed"]:
+        camp.award_research(c2, tid, 30)
+c2["research_points"] = 90
 ok_buy, msg = proc.purchase(c2, inv, "copper_wire", 1)
 check("buy wire", ok_buy and inv["stock"]["copper_wire"]["qty"] == 1, msg)
-check("rp spent", c2["research_points"] == 20)
+check("rp spent", c2["research_points"] == 90 - proc.price_of("copper_wire"))
+c2["research_points"] = 5
 ok_buy2, msg2 = proc.purchase(c2, inv, "signal_amplifier", 1)
 check("cannot overspend", not ok_buy2, msg2)
 
@@ -100,8 +112,8 @@ check("m2 unlocked persisted", "mission_2" in loaded["unlocked_missions"])
 
 print("=== Tasks config ===")
 t1 = [t for t in rtasks.TASKS.values() if t["tier"] == 1]
-rp1 = sum(t["base_rp"] + t["accuracy_bonus"] for t in t1)
-check("tier1 rp >= 70 kit", rp1 >= 70, str(rp1))
+rp1 = sum(t["base_rp"] + t.get("accuracy_bonus", 0) for t in t1)
+check("tier1 rp >= 80 kit", rp1 >= 80, str(rp1))
 
 print("=== main import ===")
 sys.path.insert(0, r"C:\MarsMission")

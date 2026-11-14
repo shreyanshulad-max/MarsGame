@@ -1,0 +1,232 @@
+{
+  "campaign_completed": false,
+  "campaign_seed": 777,
+  "campaign_started": true,
+  "completed_missions": [
+    "mission_1"
+  ],
+  "created_at": "2026-11-13 16:41:51",
+  "cross": {
+    "comm_restored": true,
+    "extra_comms": 0,
+    "extra_food": 0,
+    "extra_life": 0,
+    "power_restored": false,
+    "rover_rescued": false,
+    "scan_clarity": 0.45
+  },
+  "current_campaign_stage": "mission_2",
+  "discovered_locations": [
+    "habitat"
+  ],
+  "discovered_research_items": [],
+  "discovery_identified": [
+    "mat_cable_1",
+    "shop",
+    "power",
+    "mat_fuse_2"
+  ],
+  "discovery_revealed": [
+    "12,8",
+    "13,9",
+    "10,7",
+    "9,6",
+    "10,9",
+    "11,8",
+    "11,10",
+    "12,7",
+    "10,11",
+    "13,10",
+    "14,9",
+    "14,10",
+    "9,10",
+    "10,6",
+    "10,10",
+    "8,7",
+    "9,11",
+    "12,12",
+    "11,12",
+    "9,7",
+    "13,11",
+    "11,7",
+    "12,10",
+    "12,9",
+    "13,8",
+    "9,8",
+    "12,11",
+    "15,10",
+    "15,9",
+    "13,7",
+    "9,9",
+    "13,12",
+    "14,11",
+    "14,12",
+    "8,9",
+    "15,8",
+    "11,11",
+    "10,8",
+    "12,6",
+    "14,7",
+    "8,8",
+    "14,8",
+    "11,6",
+    "8,10",
+    "11,9"
+  ],
+  "discovery_scanned": [
+    "mat_cable_1",
+    "shop",
+    "power",
+    "mat_fuse_2"
+  ],
+  "inventory_stock": {
+    "battery_cell": {
+      "qty": 0,
+      "reserved": 0
+    },
+    "copper_wire": {
+      "qty": 1,
+      "reserved": 0
+    },
+    "insulated_cable": {
+      "qty": 2,
+      "reserved": 0
+    },
+    "lubricant": {
+      "qty": 0,
+      "reserved": 0
+    },
+    "metal_bracket": {
+      "qty": 0,
+      "reserved": 0
+    },
+    "research_log": {
+      "qty": 0,
+      "reserved": 0
+    },
+    "servo_motor": {
+      "qty": 0,
+      "reserved": 0
+    },
+    "signal_amplifier": {
+      "qty": 0,
+      "reserved": 0
+    },
+    "spare_fuse": {
+      "qty": 2,
+      "reserved": 0
+    }
+  },
+  "mission_completion_records": {
+    "mission_1": {
+      "completed_at": "2026-11-13 16:41:51",
+      "mission_id": "mission_1",
+      "name": "Communication Blackout",
+      "points_awarded": 100,
+      "summary": "saved"
+    }
+  },
+  "mission_score": 100,
+  "mission_status": {
+    "mission_1": "COMPLETED",
+    "mission_2": "IN_PROGRESS",
+    "mission_3": "LOCKED"
+  },
+  "procurement_state": {
+    "bonus_stock": {},
+    "offers": []
+  },
+  "purchased_materials": {
+    "copper_wire": 1,
+    "spare_fuse": 1
+  },
+  "randomized_cache_records": [
+    {
+      "material": "copper_wire",
+      "name": "Supply Cache (Copper Wire)",
+      "pos": [
+        1600,
+        500
+      ],
+      "qty": 2,
+      "uid": "cache_777_0_copper_wire"
+    },
+    {
+      "material": "insulated_cable",
+      "name": "Supply Cache (Insulated Cable)",
+      "pos": [
+        700,
+        400
+      ],
+      "qty": 1,
+      "uid": "cache_777_1_insulated_cable"
+    },
+    {
+      "material": "copper_wire",
+      "name": "Supply Cache (Copper Wire)",
+      "pos": [
+        1100,
+        400
+      ],
+      "qty": 1,
+      "uid": "cache_777_2_copper_wire"
+    },
+    {
+      "material": "research_log",
+      "name": "Supply Cache (Research Log)",
+      "pos": [
+        1000,
+        1800
+      ],
+      "qty": 1,
+      "uid": "cache_777_3_research_log"
+    },
+    {
+      "material": "copper_wire",
+      "name": "Supply Cache (Copper Wire)",
+      "pos": [
+        1800,
+        700
+      ],
+      "qty": 1,
+      "uid": "cache_777_4_copper_wire"
+    },
+    {
+      "material": "spare_fuse",
+      "name": "Supply Cache (Spare Fuse)",
+      "pos": [
+        2400,
+        1200
+      ],
+      "qty": 1,
+      "uid": "cache_777_5_spare_fuse"
+    }
+  ],
+  "research_points": 5,
+  "research_task_rewards": {
+    "res_mola_elevation": {
+      "accuracy_bonus": 5,
+      "base": 35,
+      "first_bonus": 0,
+      "total": 40
+    }
+  },
+  "research_tasks_completed": [
+    "res_mola_elevation"
+  ],
+  "research_tier": 2,
+  "reward_log": [
+    "+100 Mission Score \u2014 Communication Blackout completed",
+    "Unlocked: Shelter Power Emergency",
+    "+35 RP base (res_mola_elevation)",
+    "+5 RP accuracy (res_mola_elevation)",
+    "Purchased Spare Fuse \u00d71 (\u221215 RP)",
+    "Purchased Copper Wire \u00d71 (\u221220 RP)"
+  ],
+  "unlocked_missions": [
+    "mission_1",
+    "mission_2"
+  ],
+  "updated_at": "2026-11-13 16:44:46",
+  "version": 1
+}
