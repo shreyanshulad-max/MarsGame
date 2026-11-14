@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import math
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+from systems import runtime_paths as rpaths
+
+ROOT = rpaths.resource_root()  # unused for data files; kept for consistency
 
 # World size for the driving stage (larger than the 1280×720 screen)
 WORLD_W = 2400

@@ -1,0 +1,11 @@
+Application icon notes
+======================
+marsmission_icon.png  — placeholder Mars/rover mark (256×256)
+
+For Windows PyInstaller EXE branding, convert to .ico:
+  - Place marsmission_icon.ico in this folder
+  - packaging/MarsMission.spec will pick it up automatically
+
+For macOS, prefer marsmission_icon.icns (or let PyInstaller convert when tools allow).
+
+No official team logo was supplied at packaging time; this placeholder may be replaced.

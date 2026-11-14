@@ -1,0 +1,7 @@
+# MarsMission — packaging / build-time dependencies
+# Install on top of requirements.txt when creating desktop builds:
+#
+#   python -m pip install -r requirements.txt -r requirements-build.txt
+#
+-r requirements.txt
+pyinstaller>=6.0,<7

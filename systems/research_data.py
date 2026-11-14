@@ -5,12 +5,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-DATA_ROOT = ROOT / "assets" / "research_data"
+from systems import runtime_paths as rpaths
+
+ROOT = rpaths.resource_root()
+DATA_ROOT = rpaths.research_data_dir()
 MANIFEST_PATH = DATA_ROOT / "research_manifest.json"
 
 
 def ensure_dirs() -> None:
+    # Never write into read-only PyInstaller bundles
+    if not rpaths.can_write_resources():
+        return
     for sub in ("hirise", "mola", "meda", "themis", "perseverance", "solar", "metadata", "thumbnails"):
         (DATA_ROOT / sub).mkdir(parents=True, exist_ok=True)
 
@@ -31,7 +36,9 @@ def load_manifest() -> dict:
     ensure_dirs()
     if not MANIFEST_PATH.is_file():
         man = default_manifest()
-        save_manifest(man)
+        # Only persist during development; packaged builds stay read-only
+        if rpaths.can_write_resources():
+            save_manifest(man)
         return man
     try:
         with open(MANIFEST_PATH, encoding="utf-8") as f:
@@ -44,6 +51,8 @@ def load_manifest() -> dict:
 
 
 def save_manifest(manifest: dict) -> None:
+    if not rpaths.can_write_resources():
+        return
     ensure_dirs()
     with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)

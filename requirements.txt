@@ -1,0 +1,5 @@
+# MarsMission — runtime dependencies only
+# Python 3.10+ recommended
+#
+# Pygame CE installs as the "pygame" import:
+pygame-ce>=2.4.0,<3

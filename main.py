@@ -8,13 +8,23 @@ import math
 import os
 import random
 import sys
+import traceback
 
 import pygame
 
 # Ensure project root is importable when launched as a script
-_ROOT = os.path.dirname(os.path.abspath(__file__))
+_BOOT_ROOT = os.path.dirname(os.path.abspath(__file__))
+if _BOOT_ROOT not in sys.path:
+    sys.path.insert(0, _BOOT_ROOT)
+
+from systems import runtime_paths as rpaths
+
+_ROOT = str(rpaths.resource_root())
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
+_exe_dir = str(rpaths.executable_dir())
+if _exe_dir not in sys.path:
+    sys.path.insert(0, _exe_dir)
 
 from systems import audio_fx
 from systems import camera as cam_sys
@@ -49,6 +59,7 @@ from systems import terrain as terrain_sys
 from systems import tutorials as tut_sys
 from systems import wind as wind_sys
 from systems import workbench as wb
+from systems import version as app_version
 from systems.colony import WORLD_H, WORLD_W
 
 # ---- Window size and speed ----
@@ -57,7 +68,8 @@ HEIGHT = 720
 FPS = 60
 
 # Folder that holds backgrounds, sprites, effects, ui, and audio
-ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+# Resolves correctly in development and inside PyInstaller bundles
+ASSETS_DIR = str(rpaths.assets_dir())
 
 # Image cache: key -> Surface or None (None means "tried, missing/failed")
 _IMAGE_CACHE = {}
@@ -1118,7 +1130,7 @@ def main():
     """Start the game window and keep drawing until we quit."""
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("Mars Mission: Restore, Recharge & Rescue!")
+    pygame.display.set_caption(app_version.APP_TITLE)
     clock = pygame.time.Clock()
 
     fonts = {
@@ -2461,5 +2473,43 @@ def main():
     pygame.quit()
 
 
+def _write_crash_log(exc: BaseException):
+    """Write fatal errors next to the exe or into the user save dir (never into bundled assets)."""
+    from pathlib import Path
+
+    text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    candidates = []
+    try:
+        candidates.append(Path(savegame.default_user_save_dir()) / "crash.log")
+    except Exception:
+        pass
+    candidates.append(Path(rpaths.executable_dir()) / "crash.log")
+    for path in candidates:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+            return path
+        except OSError:
+            continue
+    return None
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as _fatal:
+        log_path = _write_crash_log(_fatal)
+        # Keep a console message for DEBUG builds; RELEASE still writes crash.log
+        msg = f"MARSMISSION crashed. Details: {log_path or '(could not write crash.log)'}\n{_fatal}"
+        print(msg)
+        try:
+            import tkinter
+            from tkinter import messagebox
+
+            root = tkinter.Tk()
+            root.withdraw()
+            messagebox.showerror("MARSMISSION", msg)
+            root.destroy()
+        except Exception:
+            pass
+        raise SystemExit(1) from _fatal

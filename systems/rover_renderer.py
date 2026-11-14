@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import math
-from pathlib import Path
 
 import pygame
 
-ROOT = Path(__file__).resolve().parent.parent
-ASSET_ROVER = ROOT / "assets" / "vehicles" / "rover.png"
-ASSET_ROVER_TOP = ROOT / "assets" / "vehicles" / "rover" / "rover_top.png"
+from systems import runtime_paths as rpaths
+
+ROOT = rpaths.resource_root()
+ASSET_ROVER = rpaths.assets_dir() / "vehicles" / "rover.png"
+ASSET_ROVER_TOP = rpaths.assets_dir() / "vehicles" / "rover" / "rover_top.png"
 
 _BASE_SURF: pygame.Surface | None = None
 _ROT_CACHE: dict[int, pygame.Surface] = {}

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import math
 import random
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+from systems import runtime_paths as rpaths
+
+ROOT = rpaths.resource_root()
 
 MAX_DUST = 90
 MAX_TRACKS = 120

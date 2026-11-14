@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+build/
+dist/
+*.spec.bak
+.DS_Store
+Thumbs.db
+crash.log
