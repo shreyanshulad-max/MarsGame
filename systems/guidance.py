@@ -189,49 +189,29 @@ def resolve_objective(
                     "icon": "supply",
                 }
 
-    # Research clearance before procurement
-    if not camp.research_clearance_granted(campaign, next_mission) or incomplete:
-        task = (
-            f"Complete {meta['name']} research clearance ({len(incomplete)} remaining)."
-            if incomplete
-            else f"Finish research clearance for {meta['name']}."
-        )
-        return {
-            "kind": "research",
-            "title": "Research Clearance",
-            "task": task,
-            "dest_name": "Research Terminal",
-            "x": research_pos[0],
-            "y": research_pos[1],
-            "exact": True,
-            "icon": "research",
-        }
-
-    # Need RP for remaining kit purchases
-    if missing and rp < cost:
-        need = cost - rp
-        return {
-            "kind": "research",
-            "title": "Earn Research Points",
-            "task": f"Need {need} more RP for the {meta['name']} kit.",
-            "dest_name": "Research Terminal",
-            "x": research_pos[0],
-            "y": research_pos[1],
-            "exact": True,
-            "icon": "research",
-        }
-
-    # Missing materials with clearance + enough RP → procurement
-    if missing and rp >= cost:
+    # Prefer collecting/searching world supplies; research is optional RP source
+    if missing and rp >= cost and cost > 0:
         return {
             "kind": "shop",
             "title": "Buy Mission Kit",
-            "task": f"Purchase missing parts for {meta['name']} ({cost} RP).",
+            "task": f"Optional: purchase missing parts for {meta['name']} ({cost} RP).",
             "dest_name": "Procurement Station",
             "x": shop_pos[0],
             "y": shop_pos[1],
             "exact": True,
             "icon": "shop",
+        }
+
+    if missing and incomplete and rp < cost:
+        return {
+            "kind": "research",
+            "title": "Optional Research",
+            "task": f"Earn RP for purchases, or search the colony for {mats.CATALOG[missing[0]]['name']}.",
+            "dest_name": "Research Terminal",
+            "x": research_pos[0],
+            "y": research_pos[1],
+            "exact": True,
+            "icon": "research",
         }
 
     # Undiscovered mandatory cache — search region only (never exact coords)

@@ -248,6 +248,7 @@ def mission_readiness(campaign: dict, inventory_stock: dict, mission_id: str) ->
         result["reasons"].append(lock_reason(campaign, mission_id))
         return result
 
+    # Research is OPTIONAL — tracked for RP only, never blocks mission start
     tasks = CLEARANCE_TASKS.get(mission_id, [])
     done = set(campaign.get("research_tasks_completed", []))
     for tid in tasks:
@@ -255,10 +256,7 @@ def mission_readiness(campaign: dict, inventory_stock: dict, mission_id: str) ->
             result["research_done"].append(tid)
         else:
             result["research_missing"].append(tid)
-    clearance = research_clearance_granted(campaign, mission_id)
-    result["clearance"] = clearance
-    if not clearance:
-        result["reasons"].append("Complete all mission research tasks for clearance.")
+    result["clearance"] = research_clearance_granted(campaign, mission_id)
 
     from systems import materials as mats
 
@@ -280,7 +278,8 @@ def mission_readiness(campaign: dict, inventory_stock: dict, mission_id: str) ->
         names = [mats.CATALOG[m]["name"] for m in deficits]
         result["reasons"].append("Missing materials: " + ", ".join(names))
 
-    if clearance and not deficits and st in (STATUS_AVAILABLE, STATUS_IN_PROGRESS, STATUS_PREPARED):
+    # Sole start gate: unlocked/in-progress + required materials owned
+    if not deficits and st in (STATUS_AVAILABLE, STATUS_IN_PROGRESS, STATUS_PREPARED):
         result["can_start"] = True
     return result
 

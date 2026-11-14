@@ -183,25 +183,27 @@ def draw_mission_prep(surface, fonts, mouse_pos, campaign: dict, inventory: dict
     ready = camp.mission_readiness(campaign, inventory["stock"], mission_id)
     ui.header(surface, fonts, box, meta.get("name", mission_id), "Mission preparation")
 
-    ui.label(surface, fonts, "RESEARCH", (220, 140), ui.C_MUTED, "small")
+    ui.label(surface, fonts, "RESEARCH (OPTIONAL — earns RP for store purchases)", (220, 140), ui.C_MUTED, "small")
     y = 168
     for tid in camp.CLEARANCE_TASKS.get(mission_id, []):
         task = rtasks.get_task(tid)
         done = tid in campaign.get("research_tasks_completed", [])
         mark = "✓" if done else "○"
         title = task["title"] if task else tid
-        ui.label(surface, fonts, f"{mark}  {title}", (220, y), ui.C_GREEN if done else ui.C_TEXT, "small")
-        y += 28
+        ui.label(surface, fonts, f"{mark}  {title}", (220, y), ui.C_GREEN if done else ui.C_MUTED, "small")
+        y += 26
 
-    ui.label(surface, fonts, "MATERIALS", (220, y + 12), ui.C_MUTED, "small")
-    y += 40
+    ui.label(surface, fonts, "REQUIRED MATERIALS (collect in world and/or buy with RP)", (220, y + 10), ui.C_MUTED, "small")
+    y += 38
     for mid, info in ready.get("materials", {}).items():
         line = f"{info['name']}: {info['owned']}/{info['required']}  (purchased {info['purchased']}, need {info['remaining']})"
         ui.label(surface, fonts, line, (220, y), ui.C_GREEN if info["remaining"] == 0 else ui.C_TEXT, "small")
         y += 28
 
+    if ready["can_start"]:
+        ui.label(surface, fonts, "Materials ready — research is not required to start.", (220, 470), ui.C_GREEN, "small")
     for i, reason in enumerate(ready.get("reasons") or []):
-        ui.label(surface, fonts, ui.truncate(reason, 80), (220, 480 + i * 22), ui.C_AMBER, "small")
+        ui.label(surface, fonts, ui.truncate(reason, 80), (220, 500 + i * 22), ui.C_AMBER, "small")
 
     start = pygame.Rect(0, 0, 0, 0)
     if ready["can_start"]:
@@ -230,7 +232,7 @@ def draw_mission_report(surface, fonts, mouse_pos, campaign: dict, mission_id: s
         f"Completed: {rec.get('completed_at', '—')}",
         f"Mission Score awarded: {rec.get('points_awarded', 0)} (once)",
         f"Materials used: {', '.join(rec.get('materials_used') or meta.get('kit', []))}",
-        f"Research: {len(rec.get('research_discoveries') or camp.CLEARANCE_TASKS.get(mission_id, []))} clearance tasks",
+        f"Optional research notes: {len(rec.get('research_discoveries') or [])} linked tasks",
         f"Notes: {rec.get('summary', 'Systems restored.')}",
         f"Time left: {rec.get('time_left', '—')}",
     ]

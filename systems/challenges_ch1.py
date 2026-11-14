@@ -378,7 +378,8 @@ def draw_assemble(surface, fonts, mouse_pos, ch1, inventory):
 
     supply = wb.draw_supply_panel(
         surface, fonts, inventory, mouse_pos, "ch1",
-        pygame.Rect(980, 140, 240, 360),
+        pygame.Rect(980, 130, 250, 420),
+        slots_state=ch1.get("assembly"),
     )
 
     test_btn = pygame.Rect(80, 560, 200, 48)

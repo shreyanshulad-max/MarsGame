@@ -147,16 +147,11 @@ class CampaignEconomyTests(unittest.TestCase):
     def test_f_procurement_gates(self):
         c = camp.make_campaign(2)
         inv = inv_sys.make_inventory()
-        c["research_points"] = 90
-        ok, msg = proc.purchase(c, inv, "copper_wire", 1)
-        self.assertFalse(ok)
-        self.assertIn("Communication Research", msg)
-        for tid in camp.CLEARANCE_TASKS["mission_1"]:
-            camp.award_research(c, tid, 30)
+        # Research clearance is NOT required — only RP + current mission materials
         c["research_points"] = 10
         ok, msg = proc.purchase(c, inv, "copper_wire", 1)
         self.assertFalse(ok)
-        self.assertIn("RP", msg)
+        self.assertIn("Research Points", msg)
         c["research_points"] = 90
         ok, msg = proc.purchase(c, inv, "copper_wire", 1)
         self.assertTrue(ok, msg)
@@ -174,10 +169,7 @@ class CampaignEconomyTests(unittest.TestCase):
         inv = inv_sys.make_inventory()
         ready = camp.mission_readiness(c, inv["stock"], "mission_1")
         self.assertFalse(ready["can_start"])
-        for tid in camp.CLEARANCE_TASKS["mission_1"]:
-            camp.award_research(c, tid, 30)
-        ready = camp.mission_readiness(c, inv["stock"], "mission_1")
-        self.assertFalse(ready["can_start"])
+        # Research optional — materials alone unlock start
         for mid in mats.material_pool_for_mission("mission_1"):
             mats.add_material(inv["stock"], mid, 1)
         ready = camp.mission_readiness(c, inv["stock"], "mission_1")

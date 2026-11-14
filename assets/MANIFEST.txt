@@ -20,6 +20,10 @@ buildings/
 
 vehicles/
   rover.png
+  rover/rover_top.png       (Challenge 3 top-down; procedural fallback if missing)
+  rover/rover_wheels.png    (optional)
+  rover/rover_shadow.png    (optional)
+  rover/rover_lights.png    (optional)
 
 equipment/
   antenna.png

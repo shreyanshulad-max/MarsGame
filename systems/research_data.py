@@ -56,12 +56,30 @@ def get_item(manifest: dict, item_id: str) -> dict | None:
     return None
 
 
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
+_IMAGE_CACHE: dict[str, object] = {}
+
+
 def resolve_path(item: dict) -> Path | None:
+    """Resolve a local file under assets/research_data (project-root based)."""
     rel = item.get("local_filename")
     if not rel:
         return None
-    path = DATA_ROOT / rel
+    path = (DATA_ROOT / rel).resolve()
+    try:
+        path.relative_to(DATA_ROOT.resolve())
+    except ValueError:
+        return None
     return path if path.is_file() else None
+
+
+def resolve_image_path(item: dict | None) -> Path | None:
+    path = resolve_path(item) if item else None
+    if path is None:
+        return None
+    if path.suffix.lower() not in _IMAGE_EXTS:
+        return None
+    return path
 
 
 def item_available(item: dict | None) -> bool:
@@ -73,23 +91,73 @@ def item_available(item: dict | None) -> bool:
         return bool(item.get("values")) and item.get("fabricated") is not True
     if item.get("data_type") == "context_note" and item.get("status") == "available":
         return item.get("fabricated") is not True
-    # Browse / thermal image: available when local file exists (even if status pending_download)
-    if resolve_path(item) is not None:
+    # Browse / thermal image: available when a real image file exists
+    if resolve_image_path(item) is not None:
         return item.get("fabricated") is not True
     return False
 
 
 def load_image_surface(item: dict):
-    """Return pygame Surface or None."""
+    """Return cached pygame Surface or None. Never treats JSON/timeline as an image."""
     import pygame
 
-    path = resolve_path(item)
+    path = resolve_image_path(item)
     if path is None:
         return None
+    key = str(path)
+    if key in _IMAGE_CACHE:
+        return _IMAGE_CACHE[key]
     try:
-        return pygame.image.load(str(path)).convert()
-    except pygame.error:
+        surf = pygame.image.load(str(path))
+        if pygame.display.get_surface() is not None:
+            surf = surf.convert_alpha() if path.suffix.lower() == ".png" else surf.convert()
+        _IMAGE_CACHE[key] = surf
+        return surf
+    except pygame.error as exc:
+        print(f"[research_data] Failed to load image: {path} ({exc})")
+        _IMAGE_CACHE[key] = None
         return None
+
+
+def scale_to_fit(surface, max_w: int, max_h: int):
+    """Preserve aspect ratio while fitting inside max box."""
+    import pygame
+
+    if surface is None:
+        return None
+    sw, sh = surface.get_width(), surface.get_height()
+    if sw <= 0 or sh <= 0:
+        return surface
+    scale = min(max_w / sw, max_h / sh, 1.0) if max(sw, sh) < min(max_w, max_h) else min(max_w / sw, max_h / sh)
+    nw, nh = max(1, int(sw * scale)), max(1, int(sh * scale))
+    return pygame.transform.smoothscale(surface, (nw, nh))
+
+
+def diagnose_assets() -> list[dict]:
+    """Return verification rows for research image references."""
+    from systems import research_tasks as rtasks
+
+    man = load_manifest()
+    rows = []
+    for task in rtasks.TASKS.values():
+        for key in ("dataset_item", "compare_item"):
+            iid = task.get(key)
+            if not iid:
+                continue
+            item = get_item(man, iid)
+            img_path = resolve_image_path(item)
+            rows.append(
+                {
+                    "task_id": task["id"],
+                    "ref": key,
+                    "item_id": iid,
+                    "exists": img_path is not None,
+                    "path": str(img_path) if img_path else (item or {}).get("local_filename"),
+                    "available": item_available(item),
+                    "data_type": (item or {}).get("data_type"),
+                }
+            )
+    return rows
 
 
 def list_by_dataset(manifest: dict, dataset: str) -> list[dict]:

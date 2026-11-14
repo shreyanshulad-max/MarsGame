@@ -67,10 +67,7 @@ check("rp no farm", not a2["awarded"] and c2["research_points"] == 40)
 
 print("=== Procurement ===")
 inv = inv_sys.make_inventory()
-# Grant Mission 1 clearance then fund purchases
-for tid in camp.CLEARANCE_TASKS["mission_1"]:
-    if tid not in c2["research_tasks_completed"]:
-        camp.award_research(c2, tid, 30)
+# Research is optional — purchases only need RP + current-mission catalogue
 c2["research_points"] = 90
 ok_buy, msg = proc.purchase(c2, inv, "copper_wire", 1)
 check("buy wire", ok_buy and inv["stock"]["copper_wire"]["qty"] == 1, msg)

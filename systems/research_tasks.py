@@ -322,6 +322,81 @@ TASKS = {
     },
 }
 
+# Enrich tasks with Grades 5–8 lesson fields (teaching before testing)
+_LESSON_EXTRA = {
+    "res_1a_hirise": {
+        "why": "High-resolution Mars images help scientists study landforms before landing or exploring.",
+        "learn": "HiRISE flies on Mars Reconnaissance Orbiter and takes very detailed pictures of the surface.",
+        "guide": "Dunes look wavy and sandy. Craters look round with raised rims. Compare both images carefully.",
+        "practice_prompt": "Practice: pick which side looks more like a sandy dune field.",
+        "questions": [
+            {
+                "id": "res_1a_hirise_q1",
+                "prompt": "Which scene shows a broader sandy dune field?",
+                "kind": "image_pick",
+                "options": [("A", "Left — dune / sand-dominated"), ("B", "Right — crater-dominated")],
+                "correct": "A",
+                "hint": "Look for repeating wave-like sand patterns.",
+                "explanation": "The left browse image shows ripple-like dune textures; the right shows crater forms.",
+            },
+            {
+                "id": "res_1a_hirise_q2",
+                "prompt": "What can scientists learn from a high-resolution surface image?",
+                "kind": "choice",
+                "options": [
+                    ("A", "Exact radio frequencies for Earth"),
+                    ("B", "Visible landforms such as dunes, rocks, and craters"),
+                    ("C", "The color of Earth's oceans"),
+                ],
+                "correct": "B",
+                "hint": "Think about what you can see in the picture.",
+                "explanation": "HiRISE-style images show surface shapes and textures used for geology and planning.",
+            },
+        ],
+    },
+    "res_1b_mola": {
+        "why": "Elevation data helps planners understand hills, valleys, and safer regional routes.",
+        "learn": "Elevation means how high or low the ground is. A profile is a side view of height along a path.",
+        "guide": "MOLA MEGDR is useful for broad regional topography, not tiny local rocks. Prefer gradual corridors.",
+        "practice_prompt": "Practice: compare Route A (ridges) vs Route B (broader corridor).",
+    },
+    "res_1c_site": {
+        "why": "Choosing an accessible site makes installing equipment safer and easier in a simulation.",
+        "learn": "Orbital images show whether an area looks cluttered with crater rims or more open.",
+        "guide": "This is an educational site-selection activity — not a real radio-coverage calculation.",
+        "practice_prompt": "Practice: choose the more accessible install area.",
+    },
+    "res_2a_meda": {
+        "why": "Weather and dust observations help teams plan outdoor work windows.",
+        "learn": "MEDA measures environmental conditions at Jezero. Dust and wind can change over time.",
+        "guide": "Use the curated timeline windows. Prefer calmer dust conditions for outdoor maintenance planning.",
+        "practice_prompt": "Practice: pick the calmer observation window from the timeline labels.",
+    },
+    "res_2b_themis": {
+        "why": "Infrared images show relative warm and cool surface regions for planning context.",
+        "learn": "THEMIS infrared products relate to brightness temperature — not the same as air temperature.",
+        "guide": "Always read the legend. Brighter/warmer appearance in browse IR is a relative cue only.",
+        "practice_prompt": "Practice: identify the relatively warmer-looking region.",
+    },
+    "res_2c_solar": {
+        "why": "Dust on solar panels reduces power — important for habitat energy planning.",
+        "learn": "NASA missions documented dust covering solar arrays (for example Spirit and InSight context).",
+        "guide": "The habitat's 80 power units are a game mechanic, not measured NASA watts.",
+        "practice_prompt": "Practice: decide how dust affects generation.",
+    },
+    "res_3a_perc": {
+        "why": "Rover cameras help drivers spot rocks and rough ground before moving.",
+        "learn": "Navcam/Hazcam-style views show nearby terrain obstacles.",
+        "guide": "Mark the rock/target area that should be inspected before driving.",
+        "practice_prompt": "Practice: place a marker on the obstacle area in the image.",
+    },
+}
+
+for _tid, _extra in _LESSON_EXTRA.items():
+    if _tid in TASKS:
+        TASKS[_tid].update(_extra)
+
+
 # Legacy ID aliases so older saves / tests still resolve
 LEGACY_ALIASES = {
     "res_hirise_surface": "res_1a_hirise",
@@ -345,6 +420,32 @@ def tasks_for_mission_tier(tier: int) -> list[dict]:
     return [t for t in TASKS.values() if t["tier"] == int(tier)]
 
 
+def available_tasks(campaign: dict) -> list[dict]:
+    """Pending (incomplete) tasks for the unlocked research tier."""
+    tier = int(campaign.get("research_tier", 1))
+    done = set(campaign.get("research_tasks_completed") or [])
+    return [t for t in tasks_for_tier(tier) if t["id"] not in done]
+
+
+def completed_tasks(campaign: dict) -> list[dict]:
+    done = set(campaign.get("research_tasks_completed") or [])
+    out = []
+    for tid in campaign.get("research_tasks_completed") or []:
+        t = get_task(tid)
+        if t:
+            out.append(t)
+        elif tid in done:
+            pass
+    # Stable unique by id
+    seen = set()
+    uniq = []
+    for t in out:
+        if t["id"] not in seen:
+            seen.add(t["id"])
+            uniq.append(t)
+    return uniq
+
+
 def get_task(task_id: str) -> dict | None:
     if task_id in TASKS:
         return TASKS[task_id]
@@ -352,9 +453,59 @@ def get_task(task_id: str) -> dict | None:
     return TASKS.get(alias) if alias else None
 
 
-def grade(task: dict, answer: str) -> tuple[bool, int, int]:
+def lesson_text(task: dict) -> dict:
+    """Structured teaching content for lesson-first flow."""
+    return {
+        "why": task.get("why") or "This optional activity helps you earn Research Points for supplies.",
+        "learn": task.get("learn") or task.get("intro") or "",
+        "guide": task.get("guide") or task.get("explanation") or "",
+        "practice_prompt": task.get("practice_prompt") or (
+            "Try the practice interaction below, then continue to the question."
+        ),
+    }
+
+
+def questions_for(task: dict) -> list[dict]:
+    """
+    Return question list for a task.
+    Supports either explicit task['questions'] or a single prompt/options/correct.
+    """
+    if task.get("questions"):
+        return list(task["questions"])
+    # Build one MCQ from legacy fields
+    opts = task.get("options")
+    if not opts:
+        # route/timeline/hotspot style → convert to choice options
+        rows = task.get("routes") or task.get("timeline_windows") or task.get("hotspots") or []
+        opts = [(r["id"], r.get("label") or r["id"]) for r in rows]
+    if task.get("interaction") == "marker":
+        return [
+            {
+                "id": f"{task['id']}_q1",
+                "prompt": task.get("prompt", "Mark the obstacle on the image."),
+                "kind": "marker",
+                "correct": task.get("correct", "rock"),
+                "hint": task.get("hint", ""),
+                "explanation": task.get("explanation", ""),
+            }
+        ]
+    return [
+        {
+            "id": f"{task['id']}_q1",
+            "prompt": task.get("prompt", "Choose the best answer."),
+            "kind": task.get("interaction", "choice"),
+            "options": opts,
+            "correct": task.get("correct"),
+            "hint": task.get("hint", ""),
+            "explanation": task.get("explanation", ""),
+        }
+    ]
+
+
+def grade(task: dict, answer: str, question: dict | None = None) -> tuple[bool, int, int]:
     """Returns (correct, accuracy_bonus, first_bonus)."""
-    correct = str(answer) == str(task["correct"])
+    target = (question or {}).get("correct", task.get("correct"))
+    correct = str(answer) == str(target)
     acc = task.get("accuracy_bonus", 0) if correct else 0
     first = task.get("first_bonus", 0) if correct else 0
     return correct, acc, first

@@ -121,15 +121,6 @@ def can_buy(campaign: dict, inventory: dict, mid: str, qty: int = 1) -> tuple[bo
     if mid not in mats.required_quantities_for_mission(mission):
         return False, "Material is not part of this mission kit."
 
-    # Research clearance (backend enforced)
-    clearance_msgs = {
-        "mission_1": "Complete Communication Research to unlock this supply.",
-        "mission_2": "Complete Power Systems Research to unlock this supply.",
-        "mission_3": "Complete Rover Navigation Research to unlock this supply.",
-    }
-    if not camp.research_clearance_granted(campaign, mission):
-        return False, clearance_msgs.get(mission, "Complete research clearance first.")
-
     rem = remaining_need(campaign, inventory, mid)
     if rem <= 0:
         return False, "Required quantity secured."
@@ -138,8 +129,7 @@ def can_buy(campaign: dict, inventory: dict, mid: str, qty: int = 1) -> tuple[bo
 
     cost = price_of(mid) * qty
     if campaign["research_points"] < cost:
-        need = cost - campaign["research_points"]
-        return False, f"Need {need} more RP."
+        return False, "Insufficient Research Points. Complete an optional research activity to earn more."
     return True, f"Buy {mats.CATALOG[mid]['name']} ×{qty} for {cost} RP?"
 
 
@@ -173,7 +163,6 @@ def draw_shop(surface, fonts, mouse_pos, campaign: dict, inventory: dict, ui_sta
         ui_state = {"selected": None}
 
     mission = current_store_mission(campaign)
-    clearance = camp.research_clearance_granted(campaign, mission) if mission else False
     ui.dim_backdrop(surface, 150)
     box = pygame.Rect(64, 32, 1152, 656)
     ui.panel(surface, box)
@@ -181,7 +170,7 @@ def draw_shop(surface, fonts, mouse_pos, campaign: dict, inventory: dict, ui_sta
     ui.header(
         surface, fonts, box,
         "PROCUREMENT",
-        f"{campaign['research_points']} RP   ·   {mname}   ·   Clearance {'YES' if clearance else 'NO'}",
+        f"{campaign['research_points']} RP   ·   {mname} supplies only   ·   Research optional",
     )
 
     list_box = pygame.Rect(88, 110, 640, 500)

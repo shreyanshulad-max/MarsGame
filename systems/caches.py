@@ -47,11 +47,9 @@ def generate_mission_caches(seed: int, mission_id: str) -> list[dict]:
 
     # Guarantee at least one cache opportunity for each mandatory material,
     # but never more than the required quantity total across caches.
+    # Guarantee at least one world unit of every mandatory material so research is never required
     for mid, need in reqs.items():
-        # Partial world supply: 0 or 1 unit for qty-1 recipes (procurement fills deficit)
-        world_qty = 1 if need >= 1 and rng.random() < 0.7 else 0
-        if world_qty <= 0:
-            continue
+        world_qty = max(1, min(int(need), 1))
         if site_i >= len(sites):
             break
         pos = sites[site_i]
